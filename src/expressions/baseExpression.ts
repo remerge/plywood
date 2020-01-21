@@ -99,6 +99,7 @@ import { TimePartExpression } from './timePartExpression';
 import { TimeRangeExpression } from './timeRangeExpression';
 import { TimeShiftExpression } from './timeShiftExpression';
 import { TransformCaseExpression } from './transformCaseExpression';
+import { DatabaseRequest } from 'plywood-base-api';
 
 export interface ComputeOptions extends Environment {
   rawQueries?: any[];
@@ -107,6 +108,8 @@ export interface ComputeOptions extends Environment {
   maxComputeCycles?: number;
   concurrentQueryLimit?: number;
 }
+
+export type ComputeContext = Record<string, any>;
 
 export interface AlterationFillerPromise {
   (external: External, terminal: boolean): Promise<any>;
@@ -1784,7 +1787,7 @@ export abstract class Expression implements Instance<ExpressionValue, Expression
    * @param context The context within which to compute the expression
    * @param options The options determining computation
    */
-  public compute(context: Datum = {}, options: ComputeOptions = {}): Promise<PlywoodValue> {
+  public compute(context: Datum = {}, options: ComputeOptions = {}, computeContext: ComputeContext = {}): Promise<PlywoodValue> {
     return Promise.resolve(null)
       .then(() => {
         return introspectDatum(context);
@@ -1795,7 +1798,7 @@ export abstract class Expression implements Instance<ExpressionValue, Expression
           // Top level externals need to be unsuppressed
           readyExpression = readyExpression.unsuppress();
         }
-        return readyExpression._computeResolved(options);
+        return readyExpression._computeResolved(options, computeContext);
       });
   }
 
@@ -1804,7 +1807,7 @@ export abstract class Expression implements Instance<ExpressionValue, Expression
    * @param context The context within which to compute the expression
    * @param options The options determining computation
    */
-  public computeStream(context: Datum = {}, options: ComputeOptions = {}): ReadableStream {
+  public computeStream(context: Datum = {}, options: ComputeOptions = {}, computeContext: ComputeContext): ReadableStream {
     const pt = new PassThrough({ objectMode: true });
 
     let rawQueries = options.rawQueries;
@@ -1815,11 +1818,11 @@ export abstract class Expression implements Instance<ExpressionValue, Expression
         if (readyExpression instanceof ExternalExpression) {
           // Top level externals need to be unsuppressed
           //readyExpression = readyExpression.unsuppress();
-          pipeWithError(readyExpression.external.queryValueStream(true, rawQueries), pt);
+          pipeWithError(readyExpression.external.queryValueStream(true, rawQueries, computeContext), pt);
           return;
         }
 
-        readyExpression._computeResolved(options)
+        readyExpression._computeResolved(options, computeContext)
           .then((v) => {
             const i = iteratorFactory(v as Dataset);
             let bit: PlyBit;
@@ -1836,7 +1839,7 @@ export abstract class Expression implements Instance<ExpressionValue, Expression
     return pt as any;
   }
 
-  private _computeResolved(options: ComputeOptions): Promise<PlywoodValue> {
+  private _computeResolved(options: ComputeOptions, computeContext: ComputeContext): Promise<PlywoodValue> {
     const {
       rawQueries,
       maxComputeCycles = 5,
@@ -1857,7 +1860,7 @@ export abstract class Expression implements Instance<ExpressionValue, Expression
         const readyExternalsFilled = await fillExpressionExternalAlterationAsync(readyExternals, (external, terminal) => {
           if (queriesMade < maxQueries) {
             queriesMade++;
-            return external.queryValue(terminal, rawQueries);
+            return external.queryValue(terminal, rawQueries, computeContext);
           } else {
             queriesMade++;
             return Promise.resolve(null); // Query limit reached, don't do any more queries.

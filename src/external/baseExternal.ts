@@ -33,7 +33,7 @@ import { Set } from '../datatypes/set';
 import { StringRange } from '../datatypes/stringRange';
 import { TimeRange } from '../datatypes/timeRange';
 import { iteratorFactory, PlyBit } from '../datatypes/valueStream';
-import { ExpressionJS } from '../expressions/baseExpression';
+import { ExpressionJS, ComputeContext } from '../expressions/baseExpression';
 import {
   $,
   AndExpression,
@@ -57,7 +57,6 @@ import { StreamConcat } from '../helper/streamConcat';
 import { nonEmptyLookup, pipeWithError, safeRange } from '../helper/utils';
 import { DatasetFullType, FullType, PlyType, PlyTypeSimple } from '../types';
 import { CustomDruidAggregations, CustomDruidTransforms } from './utils/druidTypes';
-
 export class TotalContainer {
   public datum: Datum;
 
@@ -637,7 +636,11 @@ export abstract class External {
     });
   }
 
-  static performQueryAndPostTransform(queryAndPostTransform: QueryAndPostTransform<any>, requester: PlywoodRequester<any>, engine: string, rawQueries: any[] | null): ReadableStream {
+  static performQueryAndPostTransform(
+    queryAndPostTransform: QueryAndPostTransform<any>,
+    requester: PlywoodRequester<any>,
+    engine: string, rawQueries: any[] | null,
+    computeContext: ComputeContext): ReadableStream {
     if (!requester) {
       return new ReadableError('must have a requester to make queries');
     }
@@ -646,6 +649,8 @@ export abstract class External {
     if (!query || !postTransform) {
       return new ReadableError('no query or postTransform');
     }
+
+    context = { ...context, ...computeContext };
 
     if (next) {
       let streamNumber = 0;
@@ -1554,8 +1559,8 @@ export abstract class External {
     throw new Error("can not call getQueryAndPostTransform directly");
   }
 
-  public queryValue(lastNode: boolean, rawQueries: any[], externalForNext: External = null): Promise<PlywoodValue | TotalContainer> {
-    const stream = this.queryValueStream(lastNode, rawQueries, externalForNext);
+  public queryValue(lastNode: boolean, rawQueries: any[], computeContext: ComputeContext, externalForNext: External = null ): Promise<PlywoodValue | TotalContainer> {
+    const stream = this.queryValueStream(lastNode, rawQueries, computeContext, externalForNext);
     let valuePromise = External.buildValueFromStream(stream);
 
     if (this.mode === 'total') {
@@ -1567,7 +1572,7 @@ export abstract class External {
     return valuePromise;
   }
 
-  protected queryBasicValueStream(rawQueries: any[] | null): ReadableStream {
+  protected queryBasicValueStream(rawQueries: any[] | null,  computeContext: ComputeContext): ReadableStream {
     const { engine, requester } = this;
 
     let queryAndPostTransform: QueryAndPostTransform<any>;
@@ -1577,18 +1582,18 @@ export abstract class External {
       return new ReadableError(e);
     }
 
-    return External.performQueryAndPostTransform(queryAndPostTransform, requester, engine, rawQueries);
+    return External.performQueryAndPostTransform(queryAndPostTransform, requester, engine, rawQueries, computeContext);
   }
 
-  public queryValueStream(lastNode: boolean, rawQueries: any[] | null, externalForNext: External = null): ReadableStream {
+  public queryValueStream(lastNode: boolean, rawQueries: any[] | null, env: ComputeContext, externalForNext: External = null): ReadableStream {
     if (!externalForNext) externalForNext = this;
 
     let delegate = this.getDelegate();
     if (delegate) {
-      return delegate.queryValueStream(lastNode, rawQueries, externalForNext);
+      return delegate.queryValueStream(lastNode, rawQueries, env, externalForNext);
     }
 
-    let finalStream = this.queryBasicValueStream(rawQueries);
+    let finalStream = this.queryBasicValueStream(rawQueries, env);
 
     if (!lastNode && this.mode === 'split') {
       finalStream = pipeWithError(finalStream, new Transform({
