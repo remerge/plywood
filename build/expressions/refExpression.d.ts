@@ -1,0 +1,34 @@
+import { ComputeFn, Datum, PlywoodValue } from '../datatypes/index';
+import { SQLDialect } from '../dialect/index';
+import { DatasetFullType, PlyType } from '../types';
+import { Expression, ExpressionJS, ExpressionValue } from './baseExpression';
+export declare const POSSIBLE_TYPES: Record<string, number>;
+export declare class RefExpression extends Expression {
+    static SIMPLE_NAME_REGEXP: RegExp;
+    static op: string;
+    static fromJS(parameters: ExpressionJS): RefExpression;
+    static parse(str: string): RefExpression;
+    static validType(typeName: string): boolean;
+    static toJavaScriptSafeName(variableName: string): string;
+    static findProperty(obj: any, key: string): any;
+    static findPropertyCI(obj: any, key: string): any;
+    nest: int;
+    name: string;
+    ignoreCase: boolean;
+    constructor(parameters: ExpressionValue);
+    valueOf(): ExpressionValue;
+    toJS(): ExpressionJS;
+    toString(): string;
+    changeName(name: string): RefExpression;
+    getFn(): ComputeFn;
+    calc(datum: Datum): PlywoodValue;
+    getJS(datumVar: string): string;
+    getSQL(dialect: SQLDialect, minimal?: boolean): string;
+    equals(other: RefExpression | undefined): boolean;
+    changeInTypeContext(typeContext: DatasetFullType): RefExpression;
+    updateTypeContext(typeContext: DatasetFullType): DatasetFullType;
+    incrementNesting(by?: int): RefExpression;
+    upgradeToType(targetType: PlyType): Expression;
+    toCaseInsensitive(): Expression;
+    private changeType;
+}
