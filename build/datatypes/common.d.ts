@@ -1,0 +1,10 @@
+import { DatasetFullType, FullType, PlyType } from '../types';
+import { Datum } from './dataset';
+export declare function getValueType(value: any): PlyType;
+export declare function getFullType(value: any): FullType;
+export declare function getFullTypeFromDatum(datum: Datum): DatasetFullType;
+export declare function valueFromJS(v: any, typeOverride?: string | null): any;
+export declare function valueToJS(v: any): any;
+export declare function datumHasExternal(datum: Datum): boolean;
+export declare function introspectDatum(datum: Datum): Promise<Datum>;
+export declare function failIfIntrospectNeededInDatum(datum: Datum): void;

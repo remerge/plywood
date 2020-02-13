@@ -42,7 +42,7 @@ import {
   SplitExpression, Splits,
   TimeBucketExpression,
   TimeFloorExpression,
-  TimePartExpression, TimeShiftExpression
+  TimePartExpression, TimeShiftExpression, ComputeContext
 } from '../expressions/index';
 import { ReadableError } from '../helper/streamBasics';
 import { dictEqual, ExtendableError, nonEmptyLookup, shallowCopy } from '../helper/utils';
@@ -1605,13 +1605,13 @@ export class DruidExternal extends External {
     return null;
   }
 
-  protected queryBasicValueStream(rawQueries: any[] | null): ReadableStream {
+  protected queryBasicValueStream(rawQueries: any[] | null,  computeContext: ComputeContext): ReadableStream {
     const decomposed = this.getJoinDecompositionShortcut();
     if (decomposed) {
       const { waterfallFilterExpression } = decomposed;
       if (waterfallFilterExpression) {
         return External.valuePromiseToStream(
-          External.buildValueFromStream(decomposed.external1.queryBasicValueStream(rawQueries)).then(pv1 => {
+          External.buildValueFromStream(decomposed.external1.queryBasicValueStream(rawQueries, computeContext)).then(pv1 => {
             let ds1 = pv1 as Dataset;
             const ds1Filter = Expression.or(ds1.data.map(datum => waterfallFilterExpression.filterFromDatum(datum)));
 
@@ -1620,15 +1620,15 @@ export class DruidExternal extends External {
             ex2Value.filter = ex2Value.filter.and(ds1Filter);
             let filteredExternal = new DruidExternal(ex2Value);
 
-            return External.buildValueFromStream(filteredExternal.queryBasicValueStream(rawQueries)).then(pv2 => {
+            return External.buildValueFromStream(filteredExternal.queryBasicValueStream(rawQueries, computeContext)).then(pv2 => {
               return ds1.leftJoin(pv2 as Dataset);
             });
           })
         );
 
       } else {
-        let plywoodValue1Promise = External.buildValueFromStream(decomposed.external1.queryBasicValueStream(rawQueries));
-        let plywoodValue2Promise = External.buildValueFromStream(decomposed.external2.queryBasicValueStream(rawQueries));
+        let plywoodValue1Promise = External.buildValueFromStream(decomposed.external1.queryBasicValueStream(rawQueries, computeContext));
+        let plywoodValue2Promise = External.buildValueFromStream(decomposed.external2.queryBasicValueStream(rawQueries, computeContext));
 
         return External.valuePromiseToStream(
           Promise.all([plywoodValue1Promise, plywoodValue2Promise]).then(([pv1, pv2]) => {
@@ -1657,7 +1657,7 @@ export class DruidExternal extends External {
       }
     }
 
-    return super.queryBasicValueStream(rawQueries);
+    return super.queryBasicValueStream(rawQueries, computeContext);
   }
 
 }
