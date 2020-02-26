@@ -30,7 +30,7 @@ var parseISODate = Chronoshift.parseISODate;
 
 var dummyObject = {};
 
-var version = exports.version = '0.21.2';
+var version = exports.version = '0.21.3';
 var promiseWhile = exports.promiseWhile = function(condition, action) {
     var loop = function () {
         if (!condition())
@@ -8506,13 +8506,19 @@ var External = (function () {
     External.getSimpleInflater = function (type, label) {
         switch (type) {
             case 'BOOLEAN': return External.booleanInflaterFactory(label);
+            case 'NULL': return External.nullInflaterFactory(label);
             case 'NUMBER': return External.numberInflaterFactory(label);
+            case 'STRING': return External.stringInflaterFactory(label);
             case 'TIME': return External.timeInflaterFactory(label);
             default: return null;
         }
     };
     External.booleanInflaterFactory = function (label) {
         return function (d) {
+            if (typeof d[label] === 'undefined') {
+                d[label] = null;
+                return;
+            }
             var v = '' + d[label];
             switch (v) {
                 case 'null':
@@ -8542,6 +8548,14 @@ var External = (function () {
             d[label] = new TimeRange({ start: start, end: duration.shift(start, timezone) });
         };
     };
+    External.nullInflaterFactory = function (label) {
+        return function (d) {
+            var v = d[label];
+            if ('' + v === "null" || typeof v === 'undefined') {
+                d[label] = null;
+            }
+        };
+    };
     External.numberRangeInflaterFactory = function (label, rangeSize) {
         return function (d) {
             var v = d[label];
@@ -8564,10 +8578,18 @@ var External = (function () {
             d[label] = isNaN(v) ? null : v;
         };
     };
+    External.stringInflaterFactory = function (label) {
+        return function (d) {
+            var v = d[label];
+            if (typeof v === 'undefined') {
+                d[label] = null;
+            }
+        };
+    };
     External.timeInflaterFactory = function (label) {
         return function (d) {
             var v = d[label];
-            if ('' + v === "null") {
+            if ('' + v === "null" || typeof v === 'undefined') {
                 d[label] = null;
                 return;
             }

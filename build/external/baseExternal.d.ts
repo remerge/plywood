@@ -110,8 +110,10 @@ export declare abstract class External {
     static getSimpleInflater(type: PlyType, label: string): Inflater;
     static booleanInflaterFactory(label: string): Inflater;
     static timeRangeInflaterFactory(label: string, duration: Duration, timezone: Timezone): Inflater;
+    static nullInflaterFactory(label: string): Inflater;
     static numberRangeInflaterFactory(label: string, rangeSize: number): Inflater;
     static numberInflaterFactory(label: string): Inflater;
+    static stringInflaterFactory(label: string): Inflater;
     static timeInflaterFactory(label: string): Inflater;
     static setStringInflaterFactory(label: string): Inflater;
     static setCardinalityInflaterFactory(label: string): Inflater;
