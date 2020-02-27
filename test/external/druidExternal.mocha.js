@@ -457,7 +457,7 @@ describe("DruidExternal", () => {
           "type": "doubleSum"
         },
         {
-          "expression": "if(abs(\"added\")!=0,(cast((pow(\"added\",2)*\"deleted\"),'DOUBLE')/abs(\"added\")),null)",
+          "expression": "if(abs(\"added\")!=0,(cast((pow(\"added\",2)*\"deleted\"),'DOUBLE')/abs(\"added\")),0)",
           "name": "SumComplex",
           "type": "doubleSum"
         }
@@ -652,7 +652,7 @@ describe("DruidExternal", () => {
             "type": "double_up"
           },
           {
-            "expression": "(pow(abs((if(pow(abs(\"Count\"),0.5)!=0,(cast(\"!T_0\",'DOUBLE')/pow(abs(\"Count\"),0.5)),null)+(\"!T_1\"*100))),2)+\"!T_2\")",
+            "expression": "(pow(abs((if(pow(abs(\"Count\"),0.5)!=0,(cast(\"!T_0\",'DOUBLE')/pow(abs(\"Count\"),0.5)),0)+(\"!T_1\"*100))),2)+\"!T_2\")",
             "name": "Abs",
             "type": "expression"
           }

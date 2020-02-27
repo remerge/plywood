@@ -348,7 +348,7 @@ describe("simulate Druid", () => {
             "type": "expression"
           },
           {
-            "expression": "if(\"Count\"!=0,(cast(\"TotalPrice\",'DOUBLE')/\"Count\"),null)",
+            "expression": "if(\"Count\"!=0,(cast(\"TotalPrice\",'DOUBLE')/\"Count\"),0)",
             "name": "AvgPrice",
             "type": "expression"
           }
@@ -1644,8 +1644,8 @@ describe("simulate Druid", () => {
         SELECT
         SUM(price) AS 'TotalPrice'
         FROM \`diamonds\`
-        WHERE '2015-01-02T12:30:00' <= \`cut\` 
-        AND '2015-01-01T10:30:00' > \`color\` 
+        WHERE '2015-01-02T12:30:00' <= \`cut\`
+        AND '2015-01-01T10:30:00' > \`color\`
         AND '2015-01-01T10:30:00' <= \`time\` AND \`time\` < '2015-01-02T12:30:00'
       `).expression;
 
@@ -1690,8 +1690,8 @@ describe("simulate Druid", () => {
         SELECT
         SUM(prIcE) AS 'TotalPrice'
         FROM \`diamonds\`
-        WHERE '2015-01-02T12:30:00' <= \`cut\` 
-        AND '2015-01-01T10:30:00' > \`color\` 
+        WHERE '2015-01-02T12:30:00' <= \`cut\`
+        AND '2015-01-01T10:30:00' > \`color\`
         AND '2015-01-01T10:30:00' <= \`time\` AND \`time\` < '2015-01-02T12:30:00'
       `).expression;
 
@@ -2655,7 +2655,7 @@ describe("simulate Druid", () => {
             "type": "quantile"
           },
           {
-            "expression": "if(\"!T_1\"!=0,(cast(\"!T_0\",'DOUBLE')/\"!T_1\"),null)",
+            "expression": "if(\"!T_1\"!=0,(cast(\"!T_0\",'DOUBLE')/\"!T_1\"),0)",
             "name": "QuantileByRedPrice",
             "type": "expression"
           }
@@ -3204,7 +3204,7 @@ describe("simulate Druid", () => {
         "intervals": "2015-03-12T00Z/2015-03-19T00Z",
         "postAggregations": [
           {
-            "expression": "if(\"NumColors\"!=0,(cast(\"NumVendors\",'DOUBLE')/\"NumColors\"),null)",
+            "expression": "if(\"NumColors\"!=0,(cast(\"NumVendors\",'DOUBLE')/\"NumColors\"),0)",
             "name": "VendorsByColors",
             "type": "expression"
           }
@@ -3805,7 +3805,7 @@ describe("simulate Druid", () => {
         "intervals": "2015-03-12T00Z/2015-03-19T00Z",
         "postAggregations": [
           {
-            "expression": "if(\"!T_1\"!=0,(cast(\"!T_0\",'DOUBLE')/\"!T_1\"),null)",
+            "expression": "if(\"!T_1\"!=0,(cast(\"!T_0\",'DOUBLE')/\"!T_1\"),0)",
             "name": "__VALUE__",
             "type": "expression"
           }
@@ -3862,7 +3862,7 @@ describe("simulate Druid", () => {
         "intervals": "2015-03-12T00Z/2015-03-19T00Z",
         "postAggregations": [
           {
-            "expression": "if(\"!T_1\"!=0,(cast(\"!T_0\",'DOUBLE')/\"!T_1\"),null)",
+            "expression": "if(\"!T_1\"!=0,(cast(\"!T_0\",'DOUBLE')/\"!T_1\"),0)",
             "name": "__VALUE__",
             "type": "expression"
           }
