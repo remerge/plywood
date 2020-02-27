@@ -10422,11 +10422,7 @@ var DruidExpressionBuilder = (function () {
                         return "(cast(" + ex1_1 + ",'DOUBLE')/" + ex2 + ")";
                     }
                     else {
-                        var nullValue = 'null';
-                        if (this.versionBefore('0.13.0')) {
-                            nullValue = '0';
-                        }
-                        return "if(" + ex2 + "!=0,(cast(" + ex1_1 + ",'DOUBLE')/" + ex2 + ")," + nullValue + ")";
+                        return "if(" + ex2 + "!=0,(cast(" + ex1_1 + ",'DOUBLE')/" + ex2 + "),0)";
                     }
                 }
                 else if (expression instanceof PowerExpression) {
