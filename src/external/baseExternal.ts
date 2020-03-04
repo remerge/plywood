@@ -452,7 +452,9 @@ export abstract class External {
   static getSimpleInflater(type: PlyType, label: string): Inflater {
     switch (type) {
       case 'BOOLEAN': return External.booleanInflaterFactory(label);
+      case 'NULL': return External.nullInflaterFactory(label);
       case 'NUMBER': return External.numberInflaterFactory(label);
+      case 'STRING': return External.stringInflaterFactory(label);
       case 'TIME': return External.timeInflaterFactory(label);
       default: return null;
     }
@@ -460,6 +462,11 @@ export abstract class External {
 
   static booleanInflaterFactory(label: string): Inflater {
     return (d: any) => {
+      if (typeof d[label] === 'undefined') {
+        d[label] = null;
+        return;
+      }
+
       let v = '' + d[label];
       switch (v) {
         case 'null':
@@ -495,6 +502,15 @@ export abstract class External {
     };
   }
 
+  static nullInflaterFactory(label: string): Inflater {
+    return (d: any) => {
+      let v = d[label];
+      if ('' + v === "null" || typeof v === 'undefined') {
+        d[label] = null;
+      }
+    };
+  }
+
   static numberRangeInflaterFactory(label: string, rangeSize: number): Inflater  {
     return (d: any) => {
       let v = d[label];
@@ -521,10 +537,19 @@ export abstract class External {
     };
   }
 
+  static stringInflaterFactory(label: string): Inflater  {
+    return (d: any) => {
+      let v = d[label];
+      if (typeof v === 'undefined') {
+        d[label] = null;
+      }
+    };
+  }
+
   static timeInflaterFactory(label: string): Inflater  {
     return (d: any) => {
       let v = d[label];
-      if ('' + v === "null") {
+      if ('' + v === "null" || typeof v === 'undefined') {
         d[label] = null;
         return;
       }
