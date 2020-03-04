@@ -14,16 +14,18 @@ export function concurrentLimitRequesterFactory(parameters) {
         var queueItem = requestQueue.shift();
         outstandingRequests++;
         var stream = requester(queueItem.request);
-        stream.on('error', requestFinished);
-        stream.on('end', requestFinished);
+        var requestFinishedOnce = getOnceCallback(requestFinished);
+        stream.on('error', requestFinishedOnce);
+        stream.on('end', requestFinishedOnce);
         pipeWithError(stream, queueItem.stream);
     }
     return function (request) {
         if (outstandingRequests < concurrentLimit) {
             outstandingRequests++;
             var stream = requester(request);
-            stream.on('error', requestFinished);
-            stream.on('end', requestFinished);
+            var requestFinishedOnce = getOnceCallback(requestFinished);
+            stream.on('error', requestFinishedOnce);
+            stream.on('end', requestFinishedOnce);
             return stream;
         }
         else {
@@ -33,6 +35,15 @@ export function concurrentLimitRequesterFactory(parameters) {
                 stream: stream
             });
             return stream;
+        }
+    };
+}
+function getOnceCallback(callback) {
+    var called = false;
+    return function () {
+        if (!called) {
+            called = true;
+            callback();
         }
     };
 }
