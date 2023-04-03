@@ -263,16 +263,7 @@ var DruidExtractionFnBuilder = (function () {
             return lookupExtractionFn;
         }
         if (fallback instanceof LiteralExpression) {
-            return DruidExtractionFnBuilder.composeFns(this.expressionToExtractionFnPure(operand), {
-                type: "lookup",
-                retainMissingValue: true,
-                lookup: {
-                    type: "map",
-                    map: {
-                        "": fallback.value
-                    }
-                }
-            });
+            throw new Error("cant handle direct fallback: " + expression);
         }
         return this.expressionToJavaScriptExtractionFn(expression);
     };

@@ -38,6 +38,9 @@ var SQLDialect = (function () {
     SQLDialect.prototype.booleanToSQL = function (bool) {
         return ('' + bool).toUpperCase();
     };
+    SQLDialect.prototype.floatDivision = function (numerator, denominator) {
+        return "(" + numerator + "/" + denominator + ")";
+    };
     SQLDialect.prototype.numberOrTimeToSQL = function (x) {
         if (x === null)
             return this.nullConstant();
@@ -94,7 +97,7 @@ var SQLDialect = (function () {
         return "(" + a + " IS NOT DISTINCT FROM " + b + ")";
     };
     SQLDialect.prototype.regexpExpression = function (expression, regexp) {
-        return "(" + expression + " REGEXP '" + regexp + "')";
+        return "(" + expression + " REGEXP " + this.escapeLiteral(regexp) + ")";
     };
     SQLDialect.prototype.inExpression = function (operand, start, end, bounds) {
         if (start === end && bounds === '[]')
@@ -116,6 +119,11 @@ var SQLDialect = (function () {
     };
     SQLDialect.prototype.lengthExpression = function (a) {
         return "CHAR_LENGTH(" + a + ")";
+    };
+    SQLDialect.prototype.logExpression = function (base, operand) {
+        if (base === String(Math.E))
+            return "LN(" + operand + ")";
+        return "LOG(" + base + "," + operand + ")";
     };
     return SQLDialect;
 }());

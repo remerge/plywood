@@ -138,7 +138,7 @@ var DruidExpressionBuilder = (function () {
             }
             else if (expression instanceof TimeFloorExpression || expression instanceof TimeBucketExpression) {
                 this.checkDruid11('timestamp_floor');
-                return "timestamp_floor(" + ex1_1 + ",'" + expression.duration + "',''," + DruidExpressionBuilder.escapeLiteral(expression.timezone.toString()) + ")";
+                return "timestamp_floor(" + ex1_1 + ",'" + expression.duration + "',null," + DruidExpressionBuilder.escapeLiteral(expression.timezone.toString()) + ")";
             }
             else if (expression instanceof TimeShiftExpression) {
                 this.checkDruid11('timestamp_shift');
@@ -194,7 +194,7 @@ var DruidExpressionBuilder = (function () {
                     return "log(" + ex1_1 + ")/log(" + ex2 + ")";
                 }
                 else if (expression instanceof ThenExpression) {
-                    return "if(" + ex1_1 + "," + ex2 + ",'')";
+                    return "if(" + ex1_1 + "," + ex2 + ",null)";
                 }
                 else if (expression instanceof FallbackExpression) {
                     return "nvl(" + ex1_1 + "," + ex2 + ")";

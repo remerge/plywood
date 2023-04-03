@@ -139,10 +139,12 @@ export declare class Dataset implements Instance<DatasetValue, DatasetJS> {
     splitFn(splitFns: Record<string, ComputeFn>, datasetName: string): Dataset;
     getReadyExternals(limit?: number): DatasetExternalAlterations;
     applyReadyExternals(alterations: DatasetExternalAlterations): Dataset;
+    sameKeys(other: Dataset): boolean;
+    getKeyValueForDatum(datum: Datum): string;
     getKeyLookup(): Record<string, Datum>;
     join(other: Dataset): Dataset;
     leftJoin(other: Dataset): Dataset;
-    fullJoin(other: Dataset, compare: (v1: any, v2: any) => number): Dataset;
+    fullJoin(other: Dataset): Dataset;
     findDatumByAttribute(attribute: string, value: any): Datum | undefined;
     getColumns(options?: FlattenOptions): AttributeInfo[];
     private _flattenHelper;

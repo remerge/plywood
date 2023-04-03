@@ -30,7 +30,7 @@ var parseISODate = Chronoshift.parseISODate;
 
 var dummyObject = {};
 
-var version = exports.version = '0.21.3';
+var version = exports.version = '0.21.11';
 var promiseWhile = exports.promiseWhile = function(condition, action) {
     var loop = function () {
         if (!condition())
@@ -2347,15 +2347,28 @@ var Dataset = (function () {
         value.data = data;
         return new Dataset(value);
     };
+    Dataset.prototype.sameKeys = function (other) {
+        return this.keys.join('|') === other.keys.join('|');
+    };
+    Dataset.prototype.getKeyValueForDatum = function (datum) {
+        var keys = this.keys;
+        if (!keys)
+            throw new Error('join lhs must have a key (be a product of a split)');
+        return this.keys.map(function (k) {
+            var v = datum[k];
+            if (v && v.start)
+                v = v.start;
+            if (v && v.toISOString)
+                v = v.toISOString();
+            return v;
+        }).join('|');
+    };
     Dataset.prototype.getKeyLookup = function () {
         var _a = this, data = _a.data, keys = _a.keys;
-        var thisKey = keys[0];
-        if (!thisKey)
-            throw new Error('join lhs must have a key (be a product of a split)');
         var mapping = Object.create(null);
         for (var i = 0; i < data.length; i++) {
             var datum = data[i];
-            mapping[String(datum[thisKey])] = datum;
+            mapping[this.getKeyValueForDatum(datum)] = datum;
         }
         return mapping;
     };
@@ -2363,17 +2376,15 @@ var Dataset = (function () {
         return this.leftJoin(other);
     };
     Dataset.prototype.leftJoin = function (other) {
+        var _this = this;
         if (!other || !other.data.length)
             return this;
         var _a = this, data = _a.data, keys = _a.keys, attributes = _a.attributes;
         if (!data.length)
             return this;
-        var thisKey = keys[0];
-        if (!thisKey)
-            throw new Error('join lhs must have a key (be a product of a split)');
         var otherLookup = other.getKeyLookup();
         var newData = data.map(function (datum) {
-            var otherDatum = otherLookup[String(datum[thisKey])];
+            var otherDatum = otherLookup[_this.getKeyValueForDatum(datum)];
             if (!otherDatum)
                 return datum;
             return joinDatums(datum, otherDatum);
@@ -2384,51 +2395,32 @@ var Dataset = (function () {
             data: newData
         });
     };
-    Dataset.prototype.fullJoin = function (other, compare) {
+    Dataset.prototype.fullJoin = function (other) {
         if (!other || !other.data.length)
             return this;
         var _a = this, data = _a.data, keys = _a.keys, attributes = _a.attributes;
         if (!data.length)
             return other;
-        var thisKey = keys[0];
-        if (!thisKey)
-            throw new Error('join lhs must have a key (be a product of a split)');
-        if (thisKey !== other.keys[0])
+        if (!this.sameKeys(other)) {
             throw new Error('this and other keys must match');
-        var otherData = other.data;
-        var dataLength = data.length;
-        var otherDataLength = otherData.length;
-        var newData = [];
-        var i = 0;
-        var j = 0;
-        while (i < dataLength || j < otherDataLength) {
-            if (i < dataLength && j < otherDataLength) {
-                var nextDatum = data[i];
-                var nextOtherDatum = otherData[j];
-                var cmp = compare(nextDatum[thisKey], nextOtherDatum[thisKey]);
-                if (cmp < 0) {
-                    newData.push(nextDatum);
-                    i++;
-                }
-                else if (cmp > 0) {
-                    newData.push(nextOtherDatum);
-                    j++;
+        }
+        var myDatumLookup = this.getKeyLookup();
+        var otherDatumLookup = other.getKeyLookup();
+        var newData = deduplicateSort(Object.keys(myDatumLookup).concat(Object.keys(otherDatumLookup))).map(function (key) {
+            var myDatum = myDatumLookup[key];
+            var otherDatum = otherDatumLookup[key];
+            if (myDatum) {
+                if (otherDatum) {
+                    return joinDatums(myDatum, otherDatum);
                 }
                 else {
-                    newData.push(joinDatums(nextDatum, nextOtherDatum));
-                    i++;
-                    j++;
+                    return myDatum;
                 }
             }
-            else if (i === dataLength) {
-                newData.push(otherData[j]);
-                j++;
-            }
             else {
-                newData.push(data[i]);
-                i++;
+                return otherDatum;
             }
-        }
+        });
         return new Dataset({
             keys: keys,
             attributes: AttributeInfo.override(attributes, other.attributes),
@@ -5842,7 +5834,7 @@ var DivideExpression = (function (_super) {
         return "(_=" + expressionJS + ",(_===0||isNaN(_)?null:" + operandJS + "/" + expressionJS + "))";
     };
     DivideExpression.prototype._getSQLChainableUnaryHelper = function (dialect, operandSQL, expressionSQL) {
-        return "(" + operandSQL + "/" + expressionSQL + ")";
+        return dialect.floatDivision(operandSQL, expressionSQL);
     };
     DivideExpression.prototype.specialSimplify = function () {
         if (this.expression.equals(Expression.ZERO))
@@ -5960,6 +5952,9 @@ var FilterExpression = (function (_super) {
         return operandValue ? operandValue.filter(this.expression) : null;
     };
     FilterExpression.prototype._getSQLChainableUnaryHelper = function (dialect, operandSQL, expressionSQL) {
+        if (this.expression instanceof RefExpression) {
+            expressionSQL = "(" + expressionSQL + " = TRUE)";
+        }
         return operandSQL + " WHERE " + expressionSQL;
     };
     FilterExpression.prototype.isNester = function () {
@@ -6430,10 +6425,7 @@ var LogExpression = (function (_super) {
         return "(Math.log(" + operandJS + ")/Math.log(" + expressionJS + "))";
     };
     LogExpression.prototype._getSQLChainableUnaryHelper = function (dialect, operandSQL, expressionSQL) {
-        var myLiteral = this.expression.getLiteralValue();
-        if (myLiteral === Math.E)
-            return "LN(" + operandSQL + ")";
-        return "LOG(" + expressionSQL + "," + operandSQL + ")";
+        return dialect.logExpression(expressionSQL, operandSQL);
     };
     LogExpression.prototype.specialSimplify = function () {
         var operand = this.operand;
@@ -8072,7 +8064,7 @@ var TimeShiftExpression = (function (_super) {
         throw new Error("implement me");
     };
     TimeShiftExpression.prototype._getSQLChainableHelper = function (dialect, operandSQL) {
-        return dialect.timeShiftExpression(operandSQL, this.duration, this.getTimezone());
+        return dialect.timeShiftExpression(operandSQL, this.duration, this.step, this.getTimezone());
     };
     TimeShiftExpression.prototype.changeStep = function (step) {
         if (this.step === step)

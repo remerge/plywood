@@ -3,7 +3,7 @@ import * as hasOwnProp from 'has-own-prop';
 import { Transform } from 'readable-stream';
 import * as toArray from 'stream-to-array';
 import { AttributeInfo, Range, Set, TimeRange } from '../datatypes/index';
-import { $, ApplyExpression, CardinalityExpression, ChainableExpression, ChainableUnaryExpression, CountDistinctExpression, CountExpression, CustomAggregateExpression, Expression, FallbackExpression, FilterExpression, InExpression, IsExpression, LiteralExpression, MatchExpression, MaxExpression, MinExpression, NumberBucketExpression, OverlapExpression, RefExpression, SplitExpression, TimeBucketExpression, TimeFloorExpression, TimePartExpression, TimeShiftExpression } from '../expressions/index';
+import { $, r, ApplyExpression, CardinalityExpression, ChainableExpression, ChainableUnaryExpression, CountDistinctExpression, CountExpression, CustomAggregateExpression, Expression, FallbackExpression, FilterExpression, InExpression, IsExpression, LiteralExpression, MatchExpression, MaxExpression, MinExpression, NumberBucketExpression, OverlapExpression, RefExpression, SplitExpression, TimeBucketExpression, TimeFloorExpression, TimePartExpression, TimeShiftExpression } from '../expressions/index';
 import { dictEqual, ExtendableError, nonEmptyLookup, shallowCopy } from '../helper/utils';
 import { External } from './baseExternal';
 import { DruidAggregationBuilder } from './utils/druidAggregationBuilder';
@@ -27,6 +27,19 @@ function expressionNeedsNumericSort(ex) {
 }
 function simpleJSONEqual(a, b) {
     return JSON.stringify(a) === JSON.stringify(b);
+}
+function getFilterSubExpression(expression) {
+    var filterSubExpression;
+    expression.some(function (ex) {
+        if (ex instanceof FilterExpression) {
+            if (!filterSubExpression) {
+                filterSubExpression = ex;
+            }
+            return true;
+        }
+        return null;
+    });
+    return filterSubExpression;
 }
 var DruidExternal = (function (_super) {
     tslib_1.__extends(DruidExternal, _super);
@@ -616,7 +629,7 @@ var DruidExternal = (function (_super) {
         }
         var splitExpression = split.firstSplitExpression();
         var label = split.firstSplitName();
-        if (!this.limit && DruidExternal.isTimestampCompatibleSort(this.sort, label)) {
+        if (!this.limit && DruidExternal.isTimestampCompatibleSort(this.sort, label) && leftoverHavingFilter.equals(Expression.TRUE)) {
             var granularityInflater = this.splitExpressionToGranularityInflater(splitExpression, label);
             if (granularityInflater) {
                 return {
@@ -772,12 +785,20 @@ var DruidExternal = (function (_super) {
                             .changeName(newName_1)
                             .changeExpression(resplitApply.expression.setOption('forceFinalize', true)));
                         outerAttributes.push(AttributeInfo.fromJS({ name: newName_1, type: 'NUMBER' }));
-                        return resplit.resplitAgg.substitute(function (ex) {
+                        var resplitAggWithUpdatedNames = resplit.resplitAgg.substitute(function (ex) {
                             if (ex instanceof RefExpression && ex.name === oldName_1) {
                                 return ex.changeName(newName_1);
                             }
                             return null;
                         });
+                        var filterExpression = getFilterSubExpression(resplit.resplitApply.expression);
+                        if (filterExpression) {
+                            var definedFilterName = newName_1 + '_def';
+                            innerApplies.push($('_').apply(definedFilterName, filterExpression.count()));
+                            outerAttributes.push(AttributeInfo.fromJS({ name: definedFilterName, type: 'NUMBER' }));
+                            resplitAggWithUpdatedNames = resplitAggWithUpdatedNames.changeOperand($('_').filter($(definedFilterName).greaterThan(r(0)).simplify()));
+                        }
+                        return resplitAggWithUpdatedNames;
                     }
                     else {
                         var tempName = "a" + i + "_" + c++;
@@ -1021,6 +1042,12 @@ var DruidExternal = (function (_super) {
                 if (virtualColumns_2.length)
                     druidQuery.virtualColumns = virtualColumns_2;
                 druidQuery.columns = columns_1;
+                if (sort && sort.refName() === this.timeAttribute && this.select.attributes.includes(this.timeAttribute)) {
+                    druidQuery.order = sort.direction;
+                    if (!druidQuery.columns.includes('__time')) {
+                        druidQuery.columns = druidQuery.columns.concat(['__time']);
+                    }
+                }
                 if (limit)
                     druidQuery.limit = limit.value;
                 return {
@@ -1326,10 +1353,6 @@ var DruidExternal = (function (_super) {
         if (this.mode !== 'split')
             return null;
         var timeAttribute = this.timeAttribute;
-        if (this.split.numSplits() !== 1)
-            return null;
-        var splitName = this.split.firstSplitName();
-        var splitExpression = this.split.firstSplitExpression();
         var appliesByTimeFilterValue = this.groupAppliesByTimeFilterValue();
         if (!appliesByTimeFilterValue || appliesByTimeFilterValue.length !== 2)
             return null;
@@ -1339,22 +1362,29 @@ var DruidExternal = (function (_super) {
             return null;
         if (filterV0.start < filterV1.start)
             appliesByTimeFilterValue.reverse();
-        if (splitExpression instanceof TimeBucketExpression && (!this.sort || this.sortOnLabel()) && !this.limit) {
-            var fallbackExpression = splitExpression.operand;
+        var timeSplitNames = this.split.mapSplits(function (name, ex) { return ex instanceof TimeBucketExpression ? name : undefined; }).filter(Boolean);
+        if (timeSplitNames.length === 1) {
+            var timeSplitName = timeSplitNames[0];
+            var timeSplitExpression = this.split.splits[timeSplitName];
+            var fallbackExpression = timeSplitExpression.operand;
             if (fallbackExpression instanceof FallbackExpression) {
                 var timeShiftExpression = fallbackExpression.expression;
                 if (timeShiftExpression instanceof TimeShiftExpression) {
                     var timeRef = timeShiftExpression.operand;
                     if (this.isTimeRef(timeRef)) {
-                        var simpleSplit = this.split.changeSplits((_a = {}, _a[splitName] = splitExpression.changeOperand(timeRef), _a));
+                        var simpleSplit = this.split.addSplits((_a = {}, _a[timeSplitName] = timeSplitExpression.changeOperand(timeRef), _a));
                         var external1Value = this.valueOf();
                         external1Value.filter = $(timeAttribute, 'TIME').overlap(appliesByTimeFilterValue[0].filterValue).and(external1Value.filter).simplify();
                         external1Value.split = simpleSplit;
                         external1Value.applies = appliesByTimeFilterValue[0].unfilteredApplies;
+                        external1Value.limit = null;
+                        external1Value.sort = null;
                         var external2Value = this.valueOf();
                         external2Value.filter = $(timeAttribute, 'TIME').overlap(appliesByTimeFilterValue[1].filterValue).and(external2Value.filter).simplify();
                         external2Value.split = simpleSplit;
                         external2Value.applies = appliesByTimeFilterValue[1].unfilteredApplies;
+                        external2Value.limit = null;
+                        external2Value.sort = null;
                         return {
                             external1: new DruidExternal(external1Value),
                             external2: new DruidExternal(external2Value),
@@ -1364,7 +1394,7 @@ var DruidExternal = (function (_super) {
                 }
             }
         }
-        if (appliesByTimeFilterValue[0].hasSort && this.limit && this.limit.value <= 1000) {
+        if (this.split.numSplits() === 1 && appliesByTimeFilterValue[0].hasSort && this.limit && this.limit.value <= 1000) {
             var external1Value = this.valueOf();
             external1Value.filter = $(timeAttribute, 'TIME').overlap(appliesByTimeFilterValue[0].filterValue).and(external1Value.filter).simplify();
             external1Value.applies = appliesByTimeFilterValue[0].unfilteredApplies;
@@ -1381,6 +1411,7 @@ var DruidExternal = (function (_super) {
         return null;
     };
     DruidExternal.prototype.queryBasicValueStream = function (rawQueries, computeContext) {
+        var _this = this;
         var decomposed = this.getJoinDecompositionShortcut();
         if (decomposed) {
             var waterfallFilterExpression_1 = decomposed.waterfallFilterExpression;
@@ -1418,7 +1449,16 @@ var DruidExternal = (function (_super) {
                             });
                         }, 'TIME_RANGE');
                     }
-                    return ds1.fullJoin(ds2, function (a, b) { return a.start.valueOf() - b.start.valueOf(); });
+                    var joined = ds1.fullJoin(ds2);
+                    var mySort = _this.sort;
+                    if (mySort && !(_this.sortOnLabel() && mySort.direction === 'ascending')) {
+                        joined = joined.sort(mySort.expression, mySort.direction);
+                    }
+                    var myLimit = _this.limit;
+                    if (myLimit) {
+                        joined = joined.limit(myLimit.value);
+                    }
+                    return joined;
                 }));
             }
         }

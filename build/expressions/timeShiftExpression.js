@@ -61,7 +61,7 @@ var TimeShiftExpression = (function (_super) {
         throw new Error("implement me");
     };
     TimeShiftExpression.prototype._getSQLChainableHelper = function (dialect, operandSQL) {
-        return dialect.timeShiftExpression(operandSQL, this.duration, this.getTimezone());
+        return dialect.timeShiftExpression(operandSQL, this.duration, this.step, this.getTimezone());
     };
     TimeShiftExpression.prototype.changeStep = function (step) {
         if (this.step === step)

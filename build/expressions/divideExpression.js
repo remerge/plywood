@@ -23,7 +23,7 @@ var DivideExpression = (function (_super) {
         return "(_=" + expressionJS + ",(_===0||isNaN(_)?null:" + operandJS + "/" + expressionJS + "))";
     };
     DivideExpression.prototype._getSQLChainableUnaryHelper = function (dialect, operandSQL, expressionSQL) {
-        return "(" + operandSQL + "/" + expressionSQL + ")";
+        return dialect.floatDivision(operandSQL, expressionSQL);
     };
     DivideExpression.prototype.specialSimplify = function () {
         if (this.expression.equals(Expression.ZERO))

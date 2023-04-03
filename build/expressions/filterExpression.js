@@ -21,6 +21,9 @@ var FilterExpression = (function (_super) {
         return operandValue ? operandValue.filter(this.expression) : null;
     };
     FilterExpression.prototype._getSQLChainableUnaryHelper = function (dialect, operandSQL, expressionSQL) {
+        if (this.expression instanceof RefExpression) {
+            expressionSQL = "(" + expressionSQL + " = TRUE)";
+        }
         return operandSQL + " WHERE " + expressionSQL;
     };
     FilterExpression.prototype.isNester = function () {
