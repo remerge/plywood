@@ -1,6 +1,6 @@
 /*
  * Copyright 2012-2015 Metamarkets Group Inc.
- * Copyright 2015-2019 Imply Data, Inc.
+ * Copyright 2015-2020 Imply Data, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import * as toArray from 'stream-to-array';
 import { AttributeInfo, Attributes, Dataset, Datum, PlywoodRange, Range, Set, TimeRange } from '../datatypes/index';
 import {
   $,
+  r,
   ApplyExpression,
   CardinalityExpression,
   ChainableExpression,
@@ -73,6 +74,22 @@ function expressionNeedsNumericSort(ex: Expression): boolean {
 
 function simpleJSONEqual(a: any, b: any): boolean {
   return JSON.stringify(a) === JSON.stringify(b); // ToDo: fill this in;
+}
+
+function getFilterSubExpression(expression: Expression): FilterExpression | undefined {
+  let filterSubExpression: FilterExpression | undefined;
+
+  expression.some((ex) => {
+    if (ex instanceof FilterExpression) {
+      if (!filterSubExpression) {
+        filterSubExpression = ex;
+      }
+      return true;
+    }
+    return null;
+  });
+
+  return filterSubExpression;
 }
 
 export interface GranularityInflater {
@@ -773,7 +790,7 @@ export class DruidExternal extends External {
     let label = split.firstSplitName();
 
     // Can it be a time series?
-    if (!this.limit && DruidExternal.isTimestampCompatibleSort(this.sort, label)) {
+    if (!this.limit && DruidExternal.isTimestampCompatibleSort(this.sort, label) && leftoverHavingFilter.equals(Expression.TRUE)) {
       let granularityInflater = this.splitExpressionToGranularityInflater(splitExpression, label);
       if (granularityInflater) {
         return {
@@ -954,12 +971,25 @@ export class DruidExternal extends External {
             );
             outerAttributes.push(AttributeInfo.fromJS({ name: newName, type: 'NUMBER' }));
 
-            return resplit.resplitAgg.substitute((ex) => {
+            let resplitAggWithUpdatedNames = resplit.resplitAgg.substitute((ex) => {
               if (ex instanceof RefExpression && ex.name === oldName) {
                 return ex.changeName(newName);
               }
               return null;
-            });
+            }) as ChainableExpression;
+
+            // If there is a filter defined on the inner agg then we need to filter the outer aggregate to only the buckets that have a non-zero count with said filter.
+            const filterExpression = getFilterSubExpression(resplit.resplitApply.expression);
+            if (filterExpression) {
+              const definedFilterName = newName + '_def';
+              innerApplies.push(
+                $('_').apply(definedFilterName, filterExpression.count())
+              );
+              outerAttributes.push(AttributeInfo.fromJS({ name: definedFilterName, type: 'NUMBER' }));
+              resplitAggWithUpdatedNames = resplitAggWithUpdatedNames.changeOperand($('_').filter($(definedFilterName).greaterThan(r(0)).simplify()));
+            }
+
+            return resplitAggWithUpdatedNames;
           } else {
             const tempName = `a${i}_${c++}`;
             innerApplies.push(Expression._.apply(tempName, ex));
@@ -1230,6 +1260,14 @@ export class DruidExternal extends External {
         druidQuery.resultFormat = 'compactedList';
         if (virtualColumns.length) druidQuery.virtualColumns = virtualColumns;
         druidQuery.columns = columns;
+
+        if (sort && sort.refName() === this.timeAttribute && this.select.attributes.includes(this.timeAttribute)) {
+          (druidQuery as any).order = sort.direction; // ToDo: update Druid types
+          if (!druidQuery.columns.includes('__time')) {
+            druidQuery.columns = druidQuery.columns.concat(['__time']);
+          }
+        }
+
         if (limit) druidQuery.limit = limit.value;
 
         return {
@@ -1537,11 +1575,6 @@ export class DruidExternal extends External {
     if (this.mode !== 'split') return null;
     const { timeAttribute } = this;
 
-    // Must have a single split
-    if (this.split.numSplits() !== 1) return null;
-    const splitName = this.split.firstSplitName();
-    const splitExpression = this.split.firstSplitExpression();
-
     // Applies must decompose into 2 things
     const appliesByTimeFilterValue = this.groupAppliesByTimeFilterValue();
     if (!appliesByTimeFilterValue || appliesByTimeFilterValue.length !== 2) return null;
@@ -1554,25 +1587,35 @@ export class DruidExternal extends External {
     // Make sure that the first value of appliesByTimeFilterValue is now
     if (filterV0.start < filterV1.start) appliesByTimeFilterValue.reverse();
 
-    // Check for timeseries decomposition
-    if (splitExpression instanceof TimeBucketExpression && (!this.sort || this.sortOnLabel()) && !this.limit) {
-      const fallbackExpression = splitExpression.operand;
+    // Find the time split (must be only one)
+    const timeSplitNames = this.split.mapSplits((name , ex) => ex instanceof TimeBucketExpression ? name : undefined).filter(Boolean);
+
+    // Check for timeseries/groupBy decomposition
+    if (timeSplitNames.length === 1) {
+      const timeSplitName = timeSplitNames[0];
+      const timeSplitExpression = this.split.splits[timeSplitName] as TimeBucketExpression;
+
+      const fallbackExpression = timeSplitExpression.operand;
       if (fallbackExpression instanceof FallbackExpression) {
         const timeShiftExpression = fallbackExpression.expression;
         if (timeShiftExpression instanceof TimeShiftExpression) {
           const timeRef = timeShiftExpression.operand;
           if (this.isTimeRef(timeRef)) {
-            const simpleSplit = this.split.changeSplits({ [splitName]: splitExpression.changeOperand(timeRef) });
+            const simpleSplit = this.split.addSplits({ [timeSplitName]: timeSplitExpression.changeOperand(timeRef) });
 
             const external1Value = this.valueOf();
             external1Value.filter = $(timeAttribute, 'TIME').overlap(appliesByTimeFilterValue[0].filterValue).and(external1Value.filter).simplify();
             external1Value.split = simpleSplit;
             external1Value.applies = appliesByTimeFilterValue[0].unfilteredApplies;
+            external1Value.limit = null; // Remove limit and sort
+            external1Value.sort = null;  // So we get a timeseries
 
             const external2Value = this.valueOf();
             external2Value.filter = $(timeAttribute, 'TIME').overlap(appliesByTimeFilterValue[1].filterValue).and(external2Value.filter).simplify();
             external2Value.split = simpleSplit;
             external2Value.applies = appliesByTimeFilterValue[1].unfilteredApplies;
+            external2Value.limit = null;
+            external2Value.sort = null;
 
             return {
               external1: new DruidExternal(external1Value),
@@ -1584,8 +1627,8 @@ export class DruidExternal extends External {
       }
     }
 
-    // Check for topN decomposition (we already checked that there is only a single split)
-    if (appliesByTimeFilterValue[0].hasSort && this.limit && this.limit.value <= 1000) {
+    // Check for topN decomposition
+    if (this.split.numSplits() === 1 && appliesByTimeFilterValue[0].hasSort && this.limit && this.limit.value <= 1000) {
       const external1Value = this.valueOf();
       external1Value.filter = $(timeAttribute, 'TIME').overlap(appliesByTimeFilterValue[0].filterValue).and(external1Value.filter).simplify();
       external1Value.applies = appliesByTimeFilterValue[0].unfilteredApplies;
@@ -1651,7 +1694,20 @@ export class DruidExternal extends External {
               }, 'TIME_RANGE');
             }
 
-            return ds1.fullJoin(ds2, (a: TimeRange, b: TimeRange) => a.start.valueOf() - b.start.valueOf());
+            let joined = ds1.fullJoin(ds2);
+
+            // Apply sort and limit
+            const mySort = this.sort;
+            if (mySort && !(this.sortOnLabel() && mySort.direction === 'ascending')) {
+              joined = joined.sort(mySort.expression, mySort.direction);
+            }
+
+            const myLimit = this.limit;
+            if (myLimit) {
+              joined = joined.limit(myLimit.value);
+            }
+
+            return joined;
           })
         );
       }

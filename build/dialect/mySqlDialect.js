@@ -59,9 +59,11 @@ var MySQLDialect = (function (_super) {
             throw new Error("unsupported part " + part + " in MySQL dialect");
         return timePartFunction.replace(/\$\$/g, this.utcToWalltime(operand, timezone));
     };
-    MySQLDialect.prototype.timeShiftExpression = function (operand, duration, timezone) {
-        var sqlFn = "DATE_ADD(";
-        var spans = duration.valueOf();
+    MySQLDialect.prototype.timeShiftExpression = function (operand, duration, step, timezone) {
+        if (step === 0)
+            return operand;
+        var sqlFn = step > 0 ? "DATE_ADD(" : "DATE_SUB(";
+        var spans = duration.multiply(Math.abs(step)).valueOf();
         if (spans.week) {
             return sqlFn + operand + ", INTERVAL " + String(spans.week) + ' WEEK)';
         }

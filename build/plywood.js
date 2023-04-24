@@ -30,7 +30,7 @@ var parseISODate = Chronoshift.parseISODate;
 
 var dummyObject = {};
 
-var version = exports.version = '0.21.3';
+var version = exports.version = '0.21.11';
 var verboseRequesterFactory = exports.verboseRequesterFactory = function(parameters) {
     var requester = parameters.requester;
     var myName = parameters.name || 'rq' + String(Math.random()).substr(2, 5);
@@ -422,6 +422,9 @@ var SQLDialect = (function () {
     SQLDialect.prototype.booleanToSQL = function (bool) {
         return ('' + bool).toUpperCase();
     };
+    SQLDialect.prototype.floatDivision = function (numerator, denominator) {
+        return "(" + numerator + "/" + denominator + ")";
+    };
     SQLDialect.prototype.numberOrTimeToSQL = function (x) {
         if (x === null)
             return this.nullConstant();
@@ -478,7 +481,7 @@ var SQLDialect = (function () {
         return "(" + a + " IS NOT DISTINCT FROM " + b + ")";
     };
     SQLDialect.prototype.regexpExpression = function (expression, regexp) {
-        return "(" + expression + " REGEXP '" + regexp + "')";
+        return "(" + expression + " REGEXP " + this.escapeLiteral(regexp) + ")";
     };
     SQLDialect.prototype.inExpression = function (operand, start, end, bounds) {
         if (start === end && bounds === '[]')
@@ -500,6 +503,11 @@ var SQLDialect = (function () {
     };
     SQLDialect.prototype.lengthExpression = function (a) {
         return "CHAR_LENGTH(" + a + ")";
+    };
+    SQLDialect.prototype.logExpression = function (base, operand) {
+        if (base === String(Math.E))
+            return "LN(" + operand + ")";
+        return "LOG(" + base + "," + operand + ")";
     };
     return SQLDialect;
 }());
@@ -563,9 +571,11 @@ var MySQLDialect = (function (_super) {
             throw new Error("unsupported part " + part + " in MySQL dialect");
         return timePartFunction.replace(/\$\$/g, this.utcToWalltime(operand, timezone));
     };
-    MySQLDialect.prototype.timeShiftExpression = function (operand, duration, timezone) {
-        var sqlFn = "DATE_ADD(";
-        var spans = duration.valueOf();
+    MySQLDialect.prototype.timeShiftExpression = function (operand, duration, step, timezone) {
+        if (step === 0)
+            return operand;
+        var sqlFn = step > 0 ? "DATE_ADD(" : "DATE_SUB(";
+        var spans = duration.multiply(Math.abs(step)).valueOf();
         if (spans.week) {
             return sqlFn + operand + ", INTERVAL " + String(spans.week) + ' WEEK)';
         }
@@ -684,9 +694,11 @@ var PostgresDialect = (function (_super) {
             throw new Error("unsupported part " + part + " in Postgres dialect");
         return timePartFunction.replace(/\$\$/g, this.utcToWalltime(operand, timezone));
     };
-    PostgresDialect.prototype.timeShiftExpression = function (operand, duration, timezone) {
-        var sqlFn = "DATE_ADD(";
-        var spans = duration.valueOf();
+    PostgresDialect.prototype.timeShiftExpression = function (operand, duration, step, timezone) {
+        if (step === 0)
+            return operand;
+        var sqlFn = step > 0 ? "DATE_ADD(" : "DATE_SUB(";
+        var spans = duration.multiply(Math.abs(step)).valueOf();
         if (spans.week) {
             return sqlFn + operand + ", INTERVAL " + String(spans.week) + ' WEEK)';
         }
@@ -759,14 +771,14 @@ var DruidDialect = (function (_super) {
     function DruidDialect() {
         return _super.call(this) || this;
     }
-    DruidDialect.prototype.nullConstant = function () {
-        return "''";
-    };
     DruidDialect.prototype.dateToSQLDateString = function (date) {
         return date.toISOString()
             .replace('T', ' ')
             .replace('Z', '')
             .replace(/\.000$/, '');
+    };
+    DruidDialect.prototype.floatDivision = function (numerator, denominator) {
+        return "(" + numerator + "*1.0/" + denominator + ")";
     };
     DruidDialect.prototype.constantGroupBy = function () {
         return "GROUP BY ''";
@@ -782,13 +794,15 @@ var DruidDialect = (function (_super) {
     DruidDialect.prototype.containsExpression = function (a, b) {
         return "POSITION(" + a + " IN " + b + ")>0";
     };
-    DruidDialect.prototype.coalesceExpression = function (a, b) {
-        return "CASE WHEN " + a + "='' THEN " + b + " ELSE " + a + " END";
-    };
     DruidDialect.prototype.substrExpression = function (a, position, length) {
         return "SUBSTRING(" + a + "," + (position + 1) + "," + length + ")";
     };
     DruidDialect.prototype.isNotDistinctFromExpression = function (a, b) {
+        var nullConst = this.nullConstant();
+        if (a === nullConst)
+            return b + " IS " + nullConst;
+        if (b === nullConst)
+            return a + " IS " + nullConst;
         return "(" + a + "=" + b + ")";
     };
     DruidDialect.prototype.castExpression = function (inputType, operand, cast) {
@@ -797,11 +811,11 @@ var DruidDialect = (function (_super) {
             throw new Error("unsupported cast from " + inputType + " to " + cast + " in Druid dialect");
         return castFunction.replace(/\$\$/g, operand);
     };
+    DruidDialect.prototype.operandAsTimestamp = function (operand) {
+        return operand.includes('__time') ? operand : "TIME_PARSE(" + operand + ")";
+    };
     DruidDialect.prototype.timeFloorExpression = function (operand, duration, timezone) {
-        var bucketFormat = DruidDialect.TIME_BUCKETING[duration.toString()];
-        if (!bucketFormat)
-            throw new Error("unsupported duration '" + duration + "'");
-        return "FLOOR(" + operand + " TO " + bucketFormat + ")";
+        return "TIME_FLOOR(" + this.operandAsTimestamp(operand) + ", " + this.escapeLiteral(duration.toString()) + ", NULL, " + this.escapeLiteral(timezone.toString()) + ")";
     };
     DruidDialect.prototype.timeBucketExpression = function (operand, duration, timezone) {
         return this.timeFloorExpression(operand, duration, timezone);
@@ -810,66 +824,55 @@ var DruidDialect = (function (_super) {
         var timePartFunction = DruidDialect.TIME_PART_TO_FUNCTION[part];
         if (!timePartFunction)
             throw new Error("unsupported part " + part + " in Druid dialect");
-        return timePartFunction.replace(/\$\$/g, operand);
+        return timePartFunction
+            .replace(/\$\$/g, this.operandAsTimestamp(operand))
+            .replace(/##/g, this.escapeLiteral(timezone.toString()));
     };
-    DruidDialect.prototype.timeShiftExpression = function (operand, duration, timezone) {
-        var sqlFn = "DATE_ADD(";
-        var spans = duration.valueOf();
-        if (spans.week) {
-            return sqlFn + operand + ", INTERVAL " + String(spans.week) + ' WEEK)';
-        }
-        if (spans.year || spans.month) {
-            var expr = String(spans.year || 0) + "-" + String(spans.month || 0);
-            operand = sqlFn + operand + ", INTERVAL '" + expr + "' YEAR_MONTH)";
-        }
-        if (spans.day || spans.hour || spans.minute || spans.second) {
-            var expr = String(spans.day || 0) + " " + [spans.hour || 0, spans.minute || 0, spans.second || 0].join(':');
-            operand = sqlFn + operand + ", INTERVAL '" + expr + "' DAY_SECOND)";
-        }
-        return operand;
+    DruidDialect.prototype.timeShiftExpression = function (operand, duration, step, timezone) {
+        return "TIME_SHIFT(" + this.operandAsTimestamp(operand) + ", " + this.escapeLiteral(duration.toString()) + ", " + step + ", " + this.escapeLiteral(timezone.toString()) + ")";
     };
     DruidDialect.prototype.extractExpression = function (operand, regexp) {
-        return "(SELECT (REGEXP_MATCHES(" + operand + ", '" + regexp + "'))[1])";
+        return "REGEXP_EXTRACT(" + operand + ", " + this.escapeLiteral(regexp) + ", 1)";
+    };
+    DruidDialect.prototype.regexpExpression = function (expression, regexp) {
+        return "REGEXP_LIKE(" + expression + ", " + this.escapeLiteral(regexp) + ")";
     };
     DruidDialect.prototype.indexOfExpression = function (str, substr) {
         return "POSITION(" + substr + " IN " + str + ") - 1";
     };
-    DruidDialect.TIME_BUCKETING = {
-        "PT1S": "second",
-        "PT1M": "minute",
-        "PT1H": "hour",
-        "P1D": "day",
-        "P1W": "week",
-        "P1M": "month",
-        "P3M": "quarter",
-        "P1Y": "year"
+    DruidDialect.prototype.logExpression = function (base, operand) {
+        if (base === String(Math.E))
+            return "LN(" + operand + ")";
+        if (base === '10')
+            return "LOG10(" + operand + ")";
+        return "LN(" + operand + ")/LN(" + base + ")";
     };
     DruidDialect.TIME_PART_TO_FUNCTION = {
-        SECOND_OF_MINUTE: "EXTRACT(SECOND FROM $$)",
-        SECOND_OF_HOUR: "(EXTRACT(MINUTE FROM $$)*60+EXTRACT(SECOND FROM $$))",
-        SECOND_OF_DAY: "((EXTRACT(HOUR FROM $$)*60+EXTRACT(MINUTE FROM $$))*60+EXTRACT(SECOND FROM $$))",
-        SECOND_OF_WEEK: "(((MOD(CAST((TIME_EXTRACT($$,'DOW')+6) AS int),7)*24)+EXTRACT(HOUR FROM $$)*60+EXTRACT(MINUTE FROM $$))*60+EXTRACT(SECOND FROM $$))",
-        SECOND_OF_MONTH: "((((EXTRACT(DAY FROM $$)-1)*24)+EXTRACT(HOUR FROM $$)*60+EXTRACT(MINUTE FROM $$))*60+EXTRACT(SECOND FROM $$))",
-        SECOND_OF_YEAR: "((((TIME_EXTRACT($$,'DOY')-1)*24)+EXTRACT(HOUR FROM $$)*60+EXTRACT(MINUTE FROM $$))*60+EXTRACT(SECOND FROM $$))",
-        MINUTE_OF_HOUR: "EXTRACT(MINUTE FROM $$)",
-        MINUTE_OF_DAY: "EXTRACT(HOUR FROM $$)*60+EXTRACT(MINUTE FROM $$)",
-        MINUTE_OF_WEEK: "(MOD(CAST((TIME_EXTRACT($$,'DOW')+6) AS int),7)*24)+EXTRACT(HOUR FROM $$)*60+EXTRACT(MINUTE FROM $$)",
-        MINUTE_OF_MONTH: "((EXTRACT(DAY FROM $$)-1)*24)+EplyXTRACT(HOUR FROM $$)*60+EXTRACT(MINUTE FROM $$)",
-        MINUTE_OF_YEAR: "((TIME_EXTRACT($$,'DOY')-1)*24)+EXTRACT(HOUR FROM $$)*60+EXTRACT(MINUTE FROM $$)",
-        HOUR_OF_DAY: "EXTRACT(HOUR FROM $$)",
-        HOUR_OF_WEEK: "(MOD(CAST((TIME_EXTRACT($$,'DOW')+6) AS int),7)*24+EXTRACT(HOUR FROM $$))",
-        HOUR_OF_MONTH: "((EXTRACT(DAY FROM $$)-1)*24+EXTRACT(HOUR FROM $$))",
-        HOUR_OF_YEAR: "((TIME_EXTRACT($$,'DOY')-1)*24+EXTRACT(HOUR FROM $$))",
-        DAY_OF_WEEK: "MOD(CAST((TIME_EXTRACT($$,'DOW')+6) AS int),7)+1",
-        DAY_OF_MONTH: "EXTRACT(DAY FROM $$)",
-        DAY_OF_YEAR: "TIME_EXTRACT($$,'DOY')",
-        WEEK_OF_YEAR: "TIME_EXTRACT($$,'WEEK')",
-        MONTH_OF_YEAR: "TIME_EXTRACT($$,'MONTH')",
-        YEAR: "EXTRACT(YEAR FROM $$)"
+        SECOND_OF_MINUTE: "TIME_EXTRACT($$,'SECOND',##)",
+        SECOND_OF_HOUR: "(TIME_EXTRACT($$,'MINUTE',##)*60+TIME_EXTRACT($$,'SECOND',##))",
+        SECOND_OF_DAY: "((TIME_EXTRACT($$,'HOUR',##)*60+TIME_EXTRACT($$,'MINUTE',##))*60+TIME_EXTRACT($$,'SECOND',##))",
+        SECOND_OF_WEEK: "(((MOD(CAST((TIME_EXTRACT($$,'DOW',##)+6) AS int),7)*24)+TIME_EXTRACT($$,'HOUR',##)*60+TIME_EXTRACT($$,'MINUTE',##))*60+TIME_EXTRACT($$,'SECOND',##))",
+        SECOND_OF_MONTH: "((((TIME_EXTRACT($$,'DAY',##)-1)*24)+TIME_EXTRACT($$,'HOUR',##)*60+TIME_EXTRACT($$,'MINUTE',##))*60+TIME_EXTRACT($$,'SECOND',##))",
+        SECOND_OF_YEAR: "((((TIME_EXTRACT($$,'DOY',##)-1)*24)+TIME_EXTRACT($$,'HOUR',##)*60+TIME_EXTRACT($$,'MINUTE',##))*60+TIME_EXTRACT($$,'SECOND',##))",
+        MINUTE_OF_HOUR: "TIME_EXTRACT($$,'MINUTE',##)",
+        MINUTE_OF_DAY: "TIME_EXTRACT($$,'HOUR',##)*60+TIME_EXTRACT($$,'MINUTE',##)",
+        MINUTE_OF_WEEK: "(MOD(CAST((TIME_EXTRACT($$,'DOW',##)+6) AS int),7)*24)+TIME_EXTRACT($$,'HOUR',##)*60+TIME_EXTRACT($$,'MINUTE',##)",
+        MINUTE_OF_MONTH: "((TIME_EXTRACT($$,'DAY',##)-1)*24)+TIME_EXTRACT($$,'HOUR',##)*60+TIME_EXTRACT($$,'MINUTE',##)",
+        MINUTE_OF_YEAR: "((TIME_EXTRACT($$,'DOY',##)-1)*24)+TIME_EXTRACT($$,'HOUR',##)*60+TIME_EXTRACT($$,'MINUTE',##)",
+        HOUR_OF_DAY: "TIME_EXTRACT($$,'HOUR',##)",
+        HOUR_OF_WEEK: "(MOD(CAST((TIME_EXTRACT($$,'DOW',##)+6) AS int),7)*24+TIME_EXTRACT($$,'HOUR',##))",
+        HOUR_OF_MONTH: "((TIME_EXTRACT($$,'DAY',##)-1)*24+TIME_EXTRACT($$,'HOUR',##))",
+        HOUR_OF_YEAR: "((TIME_EXTRACT($$,'DOY',##)-1)*24+TIME_EXTRACT($$,'HOUR',##))",
+        DAY_OF_WEEK: "MOD(CAST((TIME_EXTRACT($$,'DOW',##)+6) AS int),7)+1",
+        DAY_OF_MONTH: "TIME_EXTRACT($$,'DAY',##)",
+        DAY_OF_YEAR: "TIME_EXTRACT($$,'DOY',##)",
+        WEEK_OF_YEAR: "TIME_EXTRACT($$,'WEEK',##)",
+        MONTH_OF_YEAR: "TIME_EXTRACT($$,'MONTH',##)",
+        YEAR: "TIME_EXTRACT($$,'YEAR',##)"
     };
     DruidDialect.CAST_TO_FUNCTION = {
         TIME: {
-            NUMBER: 'TO_TIMESTAMP($$::double precision / 1000)'
+            NUMBER: 'MILLIS_TO_TIMESTAMP(CAST($$ AS BIGINT))'
         },
         NUMBER: {
             TIME: "CAST($$ AS BIGINT)",
@@ -3008,15 +3011,28 @@ var Dataset = (function () {
         value.data = data;
         return new Dataset(value);
     };
+    Dataset.prototype.sameKeys = function (other) {
+        return this.keys.join('|') === other.keys.join('|');
+    };
+    Dataset.prototype.getKeyValueForDatum = function (datum) {
+        var keys = this.keys;
+        if (!keys)
+            throw new Error('join lhs must have a key (be a product of a split)');
+        return this.keys.map(function (k) {
+            var v = datum[k];
+            if (v && v.start)
+                v = v.start;
+            if (v && v.toISOString)
+                v = v.toISOString();
+            return v;
+        }).join('|');
+    };
     Dataset.prototype.getKeyLookup = function () {
         var _a = this, data = _a.data, keys = _a.keys;
-        var thisKey = keys[0];
-        if (!thisKey)
-            throw new Error('join lhs must have a key (be a product of a split)');
         var mapping = Object.create(null);
         for (var i = 0; i < data.length; i++) {
             var datum = data[i];
-            mapping[String(datum[thisKey])] = datum;
+            mapping[this.getKeyValueForDatum(datum)] = datum;
         }
         return mapping;
     };
@@ -3024,17 +3040,15 @@ var Dataset = (function () {
         return this.leftJoin(other);
     };
     Dataset.prototype.leftJoin = function (other) {
+        var _this = this;
         if (!other || !other.data.length)
             return this;
         var _a = this, data = _a.data, keys = _a.keys, attributes = _a.attributes;
         if (!data.length)
             return this;
-        var thisKey = keys[0];
-        if (!thisKey)
-            throw new Error('join lhs must have a key (be a product of a split)');
         var otherLookup = other.getKeyLookup();
         var newData = data.map(function (datum) {
-            var otherDatum = otherLookup[String(datum[thisKey])];
+            var otherDatum = otherLookup[_this.getKeyValueForDatum(datum)];
             if (!otherDatum)
                 return datum;
             return joinDatums(datum, otherDatum);
@@ -3045,51 +3059,32 @@ var Dataset = (function () {
             data: newData
         });
     };
-    Dataset.prototype.fullJoin = function (other, compare) {
+    Dataset.prototype.fullJoin = function (other) {
         if (!other || !other.data.length)
             return this;
         var _a = this, data = _a.data, keys = _a.keys, attributes = _a.attributes;
         if (!data.length)
             return other;
-        var thisKey = keys[0];
-        if (!thisKey)
-            throw new Error('join lhs must have a key (be a product of a split)');
-        if (thisKey !== other.keys[0])
+        if (!this.sameKeys(other)) {
             throw new Error('this and other keys must match');
-        var otherData = other.data;
-        var dataLength = data.length;
-        var otherDataLength = otherData.length;
-        var newData = [];
-        var i = 0;
-        var j = 0;
-        while (i < dataLength || j < otherDataLength) {
-            if (i < dataLength && j < otherDataLength) {
-                var nextDatum = data[i];
-                var nextOtherDatum = otherData[j];
-                var cmp = compare(nextDatum[thisKey], nextOtherDatum[thisKey]);
-                if (cmp < 0) {
-                    newData.push(nextDatum);
-                    i++;
-                }
-                else if (cmp > 0) {
-                    newData.push(nextOtherDatum);
-                    j++;
+        }
+        var myDatumLookup = this.getKeyLookup();
+        var otherDatumLookup = other.getKeyLookup();
+        var newData = deduplicateSort(Object.keys(myDatumLookup).concat(Object.keys(otherDatumLookup))).map(function (key) {
+            var myDatum = myDatumLookup[key];
+            var otherDatum = otherDatumLookup[key];
+            if (myDatum) {
+                if (otherDatum) {
+                    return joinDatums(myDatum, otherDatum);
                 }
                 else {
-                    newData.push(joinDatums(nextDatum, nextOtherDatum));
-                    i++;
-                    j++;
+                    return myDatum;
                 }
             }
-            else if (i === dataLength) {
-                newData.push(otherData[j]);
-                j++;
-            }
             else {
-                newData.push(data[i]);
-                i++;
+                return otherDatum;
             }
-        }
+        });
         return new Dataset({
             keys: keys,
             attributes: AttributeInfo.override(attributes, other.attributes),
@@ -6503,7 +6498,7 @@ var DivideExpression = (function (_super) {
         return "(_=" + expressionJS + ",(_===0||isNaN(_)?null:" + operandJS + "/" + expressionJS + "))";
     };
     DivideExpression.prototype._getSQLChainableUnaryHelper = function (dialect, operandSQL, expressionSQL) {
-        return "(" + operandSQL + "/" + expressionSQL + ")";
+        return dialect.floatDivision(operandSQL, expressionSQL);
     };
     DivideExpression.prototype.specialSimplify = function () {
         if (this.expression.equals(Expression.ZERO))
@@ -6621,6 +6616,9 @@ var FilterExpression = (function (_super) {
         return operandValue ? operandValue.filter(this.expression) : null;
     };
     FilterExpression.prototype._getSQLChainableUnaryHelper = function (dialect, operandSQL, expressionSQL) {
+        if (this.expression instanceof RefExpression) {
+            expressionSQL = "(" + expressionSQL + " = TRUE)";
+        }
         return operandSQL + " WHERE " + expressionSQL;
     };
     FilterExpression.prototype.isNester = function () {
@@ -7091,10 +7089,7 @@ var LogExpression = (function (_super) {
         return "(Math.log(" + operandJS + ")/Math.log(" + expressionJS + "))";
     };
     LogExpression.prototype._getSQLChainableUnaryHelper = function (dialect, operandSQL, expressionSQL) {
-        var myLiteral = this.expression.getLiteralValue();
-        if (myLiteral === Math.E)
-            return "LN(" + operandSQL + ")";
-        return "LOG(" + expressionSQL + "," + operandSQL + ")";
+        return dialect.logExpression(expressionSQL, operandSQL);
     };
     LogExpression.prototype.specialSimplify = function () {
         var operand = this.operand;
@@ -8733,7 +8728,7 @@ var TimeShiftExpression = (function (_super) {
         throw new Error("implement me");
     };
     TimeShiftExpression.prototype._getSQLChainableHelper = function (dialect, operandSQL) {
-        return dialect.timeShiftExpression(operandSQL, this.duration, this.getTimezone());
+        return dialect.timeShiftExpression(operandSQL, this.duration, this.step, this.getTimezone());
     };
     TimeShiftExpression.prototype.changeStep = function (step) {
         if (this.step === step)
@@ -10392,7 +10387,7 @@ var DruidExpressionBuilder = (function () {
             }
             else if (expression instanceof TimeFloorExpression || expression instanceof TimeBucketExpression) {
                 this.checkDruid11('timestamp_floor');
-                return "timestamp_floor(" + ex1_1 + ",'" + expression.duration + "',''," + DruidExpressionBuilder.escapeLiteral(expression.timezone.toString()) + ")";
+                return "timestamp_floor(" + ex1_1 + ",'" + expression.duration + "',null," + DruidExpressionBuilder.escapeLiteral(expression.timezone.toString()) + ")";
             }
             else if (expression instanceof TimeShiftExpression) {
                 this.checkDruid11('timestamp_shift');
@@ -10448,7 +10443,7 @@ var DruidExpressionBuilder = (function () {
                     return "log(" + ex1_1 + ")/log(" + ex2 + ")";
                 }
                 else if (expression instanceof ThenExpression) {
-                    return "if(" + ex1_1 + "," + ex2 + ",'')";
+                    return "if(" + ex1_1 + "," + ex2 + ",null)";
                 }
                 else if (expression instanceof FallbackExpression) {
                     return "nvl(" + ex1_1 + "," + ex2 + ")";
@@ -10836,16 +10831,7 @@ var DruidExtractionFnBuilder = (function () {
             return lookupExtractionFn;
         }
         if (fallback instanceof LiteralExpression) {
-            return DruidExtractionFnBuilder.composeFns(this.expressionToExtractionFnPure(operand), {
-                type: "lookup",
-                retainMissingValue: true,
-                lookup: {
-                    type: "map",
-                    map: {
-                        "": fallback.value
-                    }
-                }
-            });
+            throw new Error("cant handle direct fallback: " + expression);
         }
         return this.expressionToJavaScriptExtractionFn(expression);
     };
@@ -11586,10 +11572,9 @@ var DruidAggregationBuilder = (function () {
                     aggregation = {
                         name: forceFinalize ? tempName : name,
                         type: "hyperUnique",
-                        fieldName: attributeName
+                        fieldName: attributeName,
+                        round: true
                     };
-                    if (!this.versionBefore('0.10.1'))
-                        aggregation.round = true;
                     if (forceFinalize) {
                         postAggregations.push({
                             type: 'finalizingFieldAccess',
@@ -11631,10 +11616,9 @@ var DruidAggregationBuilder = (function () {
                     aggregation = {
                         name: forceFinalize ? tempName : name,
                         type: "cardinality",
-                        fields: [attributeName]
+                        fields: [attributeName],
+                        round: true
                     };
-                    if (!this.versionBefore('0.10.1'))
-                        aggregation.round = true;
                     if (forceFinalize) {
                         postAggregations.push({
                             type: 'finalizingFieldAccess',
@@ -11661,10 +11645,9 @@ var DruidAggregationBuilder = (function () {
                         dimension: cardinalityExpression.getFreeReferences()[0],
                         extractionFn: druidExtractionFnBuilder_1.expressionToExtractionFn(cardinalityExpression)
                     };
-                })
+                }),
+                round: true
             };
-            if (!this.versionBefore('0.10.1'))
-                aggregation.round = true;
             if (cardinalityExpressions.length > 1)
                 aggregation.byRow = true;
         }
@@ -12411,6 +12394,19 @@ function expressionNeedsNumericSort(ex) {
 function simpleJSONEqual(a, b) {
     return JSON.stringify(a) === JSON.stringify(b);
 }
+function getFilterSubExpression(expression) {
+    var filterSubExpression;
+    expression.some(function (ex) {
+        if (ex instanceof FilterExpression) {
+            if (!filterSubExpression) {
+                filterSubExpression = ex;
+            }
+            return true;
+        }
+        return null;
+    });
+    return filterSubExpression;
+}
 var DruidExternal = (function (_super) {
     tslib_1.__extends(DruidExternal, _super);
     function DruidExternal(parameters) {
@@ -12999,7 +12995,7 @@ var DruidExternal = (function (_super) {
         }
         var splitExpression = split.firstSplitExpression();
         var label = split.firstSplitName();
-        if (!this.limit && DruidExternal.isTimestampCompatibleSort(this.sort, label)) {
+        if (!this.limit && DruidExternal.isTimestampCompatibleSort(this.sort, label) && leftoverHavingFilter.equals(Expression.TRUE)) {
             var granularityInflater = this.splitExpressionToGranularityInflater(splitExpression, label);
             if (granularityInflater) {
                 return {
@@ -13155,12 +13151,20 @@ var DruidExternal = (function (_super) {
                             .changeName(newName_1)
                             .changeExpression(resplitApply.expression.setOption('forceFinalize', true)));
                         outerAttributes.push(AttributeInfo.fromJS({ name: newName_1, type: 'NUMBER' }));
-                        return resplit.resplitAgg.substitute(function (ex) {
+                        var resplitAggWithUpdatedNames = resplit.resplitAgg.substitute(function (ex) {
                             if (ex instanceof RefExpression && ex.name === oldName_1) {
                                 return ex.changeName(newName_1);
                             }
                             return null;
                         });
+                        var filterExpression = getFilterSubExpression(resplit.resplitApply.expression);
+                        if (filterExpression) {
+                            var definedFilterName = newName_1 + '_def';
+                            innerApplies.push($('_').apply(definedFilterName, filterExpression.count()));
+                            outerAttributes.push(AttributeInfo.fromJS({ name: definedFilterName, type: 'NUMBER' }));
+                            resplitAggWithUpdatedNames = resplitAggWithUpdatedNames.changeOperand($('_').filter($(definedFilterName).greaterThan(r(0)).simplify()));
+                        }
+                        return resplitAggWithUpdatedNames;
                     }
                     else {
                         var tempName = "a" + i + "_" + c++;
@@ -13404,6 +13408,12 @@ var DruidExternal = (function (_super) {
                 if (virtualColumns_2.length)
                     druidQuery.virtualColumns = virtualColumns_2;
                 druidQuery.columns = columns_1;
+                if (sort && sort.refName() === this.timeAttribute && this.select.attributes.includes(this.timeAttribute)) {
+                    druidQuery.order = sort.direction;
+                    if (!druidQuery.columns.includes('__time')) {
+                        druidQuery.columns = druidQuery.columns.concat(['__time']);
+                    }
+                }
                 if (limit)
                     druidQuery.limit = limit.value;
                 return {
@@ -13709,10 +13719,6 @@ var DruidExternal = (function (_super) {
         if (this.mode !== 'split')
             return null;
         var timeAttribute = this.timeAttribute;
-        if (this.split.numSplits() !== 1)
-            return null;
-        var splitName = this.split.firstSplitName();
-        var splitExpression = this.split.firstSplitExpression();
         var appliesByTimeFilterValue = this.groupAppliesByTimeFilterValue();
         if (!appliesByTimeFilterValue || appliesByTimeFilterValue.length !== 2)
             return null;
@@ -13722,22 +13728,29 @@ var DruidExternal = (function (_super) {
             return null;
         if (filterV0.start < filterV1.start)
             appliesByTimeFilterValue.reverse();
-        if (splitExpression instanceof TimeBucketExpression && (!this.sort || this.sortOnLabel()) && !this.limit) {
-            var fallbackExpression = splitExpression.operand;
+        var timeSplitNames = this.split.mapSplits(function (name, ex) { return ex instanceof TimeBucketExpression ? name : undefined; }).filter(Boolean);
+        if (timeSplitNames.length === 1) {
+            var timeSplitName = timeSplitNames[0];
+            var timeSplitExpression = this.split.splits[timeSplitName];
+            var fallbackExpression = timeSplitExpression.operand;
             if (fallbackExpression instanceof FallbackExpression) {
                 var timeShiftExpression = fallbackExpression.expression;
                 if (timeShiftExpression instanceof TimeShiftExpression) {
                     var timeRef = timeShiftExpression.operand;
                     if (this.isTimeRef(timeRef)) {
-                        var simpleSplit = this.split.changeSplits((_a = {}, _a[splitName] = splitExpression.changeOperand(timeRef), _a));
+                        var simpleSplit = this.split.addSplits((_a = {}, _a[timeSplitName] = timeSplitExpression.changeOperand(timeRef), _a));
                         var external1Value = this.valueOf();
                         external1Value.filter = $(timeAttribute, 'TIME').overlap(appliesByTimeFilterValue[0].filterValue).and(external1Value.filter).simplify();
                         external1Value.split = simpleSplit;
                         external1Value.applies = appliesByTimeFilterValue[0].unfilteredApplies;
+                        external1Value.limit = null;
+                        external1Value.sort = null;
                         var external2Value = this.valueOf();
                         external2Value.filter = $(timeAttribute, 'TIME').overlap(appliesByTimeFilterValue[1].filterValue).and(external2Value.filter).simplify();
                         external2Value.split = simpleSplit;
                         external2Value.applies = appliesByTimeFilterValue[1].unfilteredApplies;
+                        external2Value.limit = null;
+                        external2Value.sort = null;
                         return {
                             external1: new DruidExternal(external1Value),
                             external2: new DruidExternal(external2Value),
@@ -13747,7 +13760,7 @@ var DruidExternal = (function (_super) {
                 }
             }
         }
-        if (appliesByTimeFilterValue[0].hasSort && this.limit && this.limit.value <= 1000) {
+        if (this.split.numSplits() === 1 && appliesByTimeFilterValue[0].hasSort && this.limit && this.limit.value <= 1000) {
             var external1Value = this.valueOf();
             external1Value.filter = $(timeAttribute, 'TIME').overlap(appliesByTimeFilterValue[0].filterValue).and(external1Value.filter).simplify();
             external1Value.applies = appliesByTimeFilterValue[0].unfilteredApplies;
@@ -13764,6 +13777,7 @@ var DruidExternal = (function (_super) {
         return null;
     };
     DruidExternal.prototype.queryBasicValueStream = function (rawQueries, computeContext) {
+        var _this = this;
         var decomposed = this.getJoinDecompositionShortcut();
         if (decomposed) {
             var waterfallFilterExpression_1 = decomposed.waterfallFilterExpression;
@@ -13801,7 +13815,16 @@ var DruidExternal = (function (_super) {
                             });
                         }, 'TIME_RANGE');
                     }
-                    return ds1.fullJoin(ds2, function (a, b) { return a.start.valueOf() - b.start.valueOf(); });
+                    var joined = ds1.fullJoin(ds2);
+                    var mySort = _this.sort;
+                    if (mySort && !(_this.sortOnLabel() && mySort.direction === 'ascending')) {
+                        joined = joined.sort(mySort.expression, mySort.direction);
+                    }
+                    var myLimit = _this.limit;
+                    if (myLimit) {
+                        joined = joined.limit(myLimit.value);
+                    }
+                    return joined;
                 }));
             }
         }

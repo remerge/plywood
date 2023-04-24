@@ -10,6 +10,7 @@ export declare abstract class SQLDialect {
     maybeNamespacedName(name: string): string;
     escapeLiteral(name: string): string;
     booleanToSQL(bool: boolean): string;
+    floatDivision(numerator: string, denominator: string): string;
     numberOrTimeToSQL(x: number | Date): string;
     numberToSQL(num: number): string;
     dateToSQLDateString(date: Date): string;
@@ -28,7 +29,8 @@ export declare abstract class SQLDialect {
     abstract timeFloorExpression(operand: string, duration: Duration, timezone: Timezone): string;
     abstract timeBucketExpression(operand: string, duration: Duration, timezone: Timezone): string;
     abstract timePartExpression(operand: string, part: string, timezone: Timezone): string;
-    abstract timeShiftExpression(operand: string, duration: Duration, timezone: Timezone): string;
+    abstract timeShiftExpression(operand: string, duration: Duration, step: int, timezone: Timezone): string;
     abstract extractExpression(operand: string, regexp: string): string;
     abstract indexOfExpression(str: string, substr: string): string;
+    logExpression(base: string, operand: string): string;
 }

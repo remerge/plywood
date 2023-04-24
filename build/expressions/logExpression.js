@@ -26,10 +26,7 @@ var LogExpression = (function (_super) {
         return "(Math.log(" + operandJS + ")/Math.log(" + expressionJS + "))";
     };
     LogExpression.prototype._getSQLChainableUnaryHelper = function (dialect, operandSQL, expressionSQL) {
-        var myLiteral = this.expression.getLiteralValue();
-        if (myLiteral === Math.E)
-            return "LN(" + operandSQL + ")";
-        return "LOG(" + expressionSQL + "," + operandSQL + ")";
+        return dialect.logExpression(expressionSQL, operandSQL);
     };
     LogExpression.prototype.specialSimplify = function () {
         var operand = this.operand;

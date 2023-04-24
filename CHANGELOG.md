@@ -1,5 +1,37 @@
 # Change Log
 
+## 0.21.11
+
+- Fix 0.21.10 overwriting 0.21.9
+
+## 0.21.10
+
+- Fix inconsistent results when applying comparisons against overlapping time ranges
+
+## 0.21.9
+
+- Fix filtering for filtered averages in resplit queries for complex inner aggregations 
+
+## 0.21.8
+
+- Fix measure re-splitter with filter
+
+## 0.21.7
+
+- Updated Druid SQL driver to be up to date with latest Druid
+
+## 0.21.6
+
+- Better decomposition for time compare
+
+## 0.21.5
+
+- Fix bug when having filter was being swallowed for the timeseries
+
+## 0.21.4
+
+- Fix filtering for filtered averages in resplit queries 
+
 ## 0.21.3
 
 - Better handle `undefined` in druid groupBys

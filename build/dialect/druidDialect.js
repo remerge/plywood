@@ -5,14 +5,14 @@ var DruidDialect = (function (_super) {
     function DruidDialect() {
         return _super.call(this) || this;
     }
-    DruidDialect.prototype.nullConstant = function () {
-        return "''";
-    };
     DruidDialect.prototype.dateToSQLDateString = function (date) {
         return date.toISOString()
             .replace('T', ' ')
             .replace('Z', '')
             .replace(/\.000$/, '');
+    };
+    DruidDialect.prototype.floatDivision = function (numerator, denominator) {
+        return "(" + numerator + "*1.0/" + denominator + ")";
     };
     DruidDialect.prototype.constantGroupBy = function () {
         return "GROUP BY ''";
@@ -28,13 +28,15 @@ var DruidDialect = (function (_super) {
     DruidDialect.prototype.containsExpression = function (a, b) {
         return "POSITION(" + a + " IN " + b + ")>0";
     };
-    DruidDialect.prototype.coalesceExpression = function (a, b) {
-        return "CASE WHEN " + a + "='' THEN " + b + " ELSE " + a + " END";
-    };
     DruidDialect.prototype.substrExpression = function (a, position, length) {
         return "SUBSTRING(" + a + "," + (position + 1) + "," + length + ")";
     };
     DruidDialect.prototype.isNotDistinctFromExpression = function (a, b) {
+        var nullConst = this.nullConstant();
+        if (a === nullConst)
+            return b + " IS " + nullConst;
+        if (b === nullConst)
+            return a + " IS " + nullConst;
         return "(" + a + "=" + b + ")";
     };
     DruidDialect.prototype.castExpression = function (inputType, operand, cast) {
@@ -43,11 +45,11 @@ var DruidDialect = (function (_super) {
             throw new Error("unsupported cast from " + inputType + " to " + cast + " in Druid dialect");
         return castFunction.replace(/\$\$/g, operand);
     };
+    DruidDialect.prototype.operandAsTimestamp = function (operand) {
+        return operand.includes('__time') ? operand : "TIME_PARSE(" + operand + ")";
+    };
     DruidDialect.prototype.timeFloorExpression = function (operand, duration, timezone) {
-        var bucketFormat = DruidDialect.TIME_BUCKETING[duration.toString()];
-        if (!bucketFormat)
-            throw new Error("unsupported duration '" + duration + "'");
-        return "FLOOR(" + operand + " TO " + bucketFormat + ")";
+        return "TIME_FLOOR(" + this.operandAsTimestamp(operand) + ", " + this.escapeLiteral(duration.toString()) + ", NULL, " + this.escapeLiteral(timezone.toString()) + ")";
     };
     DruidDialect.prototype.timeBucketExpression = function (operand, duration, timezone) {
         return this.timeFloorExpression(operand, duration, timezone);
@@ -56,66 +58,55 @@ var DruidDialect = (function (_super) {
         var timePartFunction = DruidDialect.TIME_PART_TO_FUNCTION[part];
         if (!timePartFunction)
             throw new Error("unsupported part " + part + " in Druid dialect");
-        return timePartFunction.replace(/\$\$/g, operand);
+        return timePartFunction
+            .replace(/\$\$/g, this.operandAsTimestamp(operand))
+            .replace(/##/g, this.escapeLiteral(timezone.toString()));
     };
-    DruidDialect.prototype.timeShiftExpression = function (operand, duration, timezone) {
-        var sqlFn = "DATE_ADD(";
-        var spans = duration.valueOf();
-        if (spans.week) {
-            return sqlFn + operand + ", INTERVAL " + String(spans.week) + ' WEEK)';
-        }
-        if (spans.year || spans.month) {
-            var expr = String(spans.year || 0) + "-" + String(spans.month || 0);
-            operand = sqlFn + operand + ", INTERVAL '" + expr + "' YEAR_MONTH)";
-        }
-        if (spans.day || spans.hour || spans.minute || spans.second) {
-            var expr = String(spans.day || 0) + " " + [spans.hour || 0, spans.minute || 0, spans.second || 0].join(':');
-            operand = sqlFn + operand + ", INTERVAL '" + expr + "' DAY_SECOND)";
-        }
-        return operand;
+    DruidDialect.prototype.timeShiftExpression = function (operand, duration, step, timezone) {
+        return "TIME_SHIFT(" + this.operandAsTimestamp(operand) + ", " + this.escapeLiteral(duration.toString()) + ", " + step + ", " + this.escapeLiteral(timezone.toString()) + ")";
     };
     DruidDialect.prototype.extractExpression = function (operand, regexp) {
-        return "(SELECT (REGEXP_MATCHES(" + operand + ", '" + regexp + "'))[1])";
+        return "REGEXP_EXTRACT(" + operand + ", " + this.escapeLiteral(regexp) + ", 1)";
+    };
+    DruidDialect.prototype.regexpExpression = function (expression, regexp) {
+        return "REGEXP_LIKE(" + expression + ", " + this.escapeLiteral(regexp) + ")";
     };
     DruidDialect.prototype.indexOfExpression = function (str, substr) {
         return "POSITION(" + substr + " IN " + str + ") - 1";
     };
-    DruidDialect.TIME_BUCKETING = {
-        "PT1S": "second",
-        "PT1M": "minute",
-        "PT1H": "hour",
-        "P1D": "day",
-        "P1W": "week",
-        "P1M": "month",
-        "P3M": "quarter",
-        "P1Y": "year"
+    DruidDialect.prototype.logExpression = function (base, operand) {
+        if (base === String(Math.E))
+            return "LN(" + operand + ")";
+        if (base === '10')
+            return "LOG10(" + operand + ")";
+        return "LN(" + operand + ")/LN(" + base + ")";
     };
     DruidDialect.TIME_PART_TO_FUNCTION = {
-        SECOND_OF_MINUTE: "EXTRACT(SECOND FROM $$)",
-        SECOND_OF_HOUR: "(EXTRACT(MINUTE FROM $$)*60+EXTRACT(SECOND FROM $$))",
-        SECOND_OF_DAY: "((EXTRACT(HOUR FROM $$)*60+EXTRACT(MINUTE FROM $$))*60+EXTRACT(SECOND FROM $$))",
-        SECOND_OF_WEEK: "(((MOD(CAST((TIME_EXTRACT($$,'DOW')+6) AS int),7)*24)+EXTRACT(HOUR FROM $$)*60+EXTRACT(MINUTE FROM $$))*60+EXTRACT(SECOND FROM $$))",
-        SECOND_OF_MONTH: "((((EXTRACT(DAY FROM $$)-1)*24)+EXTRACT(HOUR FROM $$)*60+EXTRACT(MINUTE FROM $$))*60+EXTRACT(SECOND FROM $$))",
-        SECOND_OF_YEAR: "((((TIME_EXTRACT($$,'DOY')-1)*24)+EXTRACT(HOUR FROM $$)*60+EXTRACT(MINUTE FROM $$))*60+EXTRACT(SECOND FROM $$))",
-        MINUTE_OF_HOUR: "EXTRACT(MINUTE FROM $$)",
-        MINUTE_OF_DAY: "EXTRACT(HOUR FROM $$)*60+EXTRACT(MINUTE FROM $$)",
-        MINUTE_OF_WEEK: "(MOD(CAST((TIME_EXTRACT($$,'DOW')+6) AS int),7)*24)+EXTRACT(HOUR FROM $$)*60+EXTRACT(MINUTE FROM $$)",
-        MINUTE_OF_MONTH: "((EXTRACT(DAY FROM $$)-1)*24)+EplyXTRACT(HOUR FROM $$)*60+EXTRACT(MINUTE FROM $$)",
-        MINUTE_OF_YEAR: "((TIME_EXTRACT($$,'DOY')-1)*24)+EXTRACT(HOUR FROM $$)*60+EXTRACT(MINUTE FROM $$)",
-        HOUR_OF_DAY: "EXTRACT(HOUR FROM $$)",
-        HOUR_OF_WEEK: "(MOD(CAST((TIME_EXTRACT($$,'DOW')+6) AS int),7)*24+EXTRACT(HOUR FROM $$))",
-        HOUR_OF_MONTH: "((EXTRACT(DAY FROM $$)-1)*24+EXTRACT(HOUR FROM $$))",
-        HOUR_OF_YEAR: "((TIME_EXTRACT($$,'DOY')-1)*24+EXTRACT(HOUR FROM $$))",
-        DAY_OF_WEEK: "MOD(CAST((TIME_EXTRACT($$,'DOW')+6) AS int),7)+1",
-        DAY_OF_MONTH: "EXTRACT(DAY FROM $$)",
-        DAY_OF_YEAR: "TIME_EXTRACT($$,'DOY')",
-        WEEK_OF_YEAR: "TIME_EXTRACT($$,'WEEK')",
-        MONTH_OF_YEAR: "TIME_EXTRACT($$,'MONTH')",
-        YEAR: "EXTRACT(YEAR FROM $$)"
+        SECOND_OF_MINUTE: "TIME_EXTRACT($$,'SECOND',##)",
+        SECOND_OF_HOUR: "(TIME_EXTRACT($$,'MINUTE',##)*60+TIME_EXTRACT($$,'SECOND',##))",
+        SECOND_OF_DAY: "((TIME_EXTRACT($$,'HOUR',##)*60+TIME_EXTRACT($$,'MINUTE',##))*60+TIME_EXTRACT($$,'SECOND',##))",
+        SECOND_OF_WEEK: "(((MOD(CAST((TIME_EXTRACT($$,'DOW',##)+6) AS int),7)*24)+TIME_EXTRACT($$,'HOUR',##)*60+TIME_EXTRACT($$,'MINUTE',##))*60+TIME_EXTRACT($$,'SECOND',##))",
+        SECOND_OF_MONTH: "((((TIME_EXTRACT($$,'DAY',##)-1)*24)+TIME_EXTRACT($$,'HOUR',##)*60+TIME_EXTRACT($$,'MINUTE',##))*60+TIME_EXTRACT($$,'SECOND',##))",
+        SECOND_OF_YEAR: "((((TIME_EXTRACT($$,'DOY',##)-1)*24)+TIME_EXTRACT($$,'HOUR',##)*60+TIME_EXTRACT($$,'MINUTE',##))*60+TIME_EXTRACT($$,'SECOND',##))",
+        MINUTE_OF_HOUR: "TIME_EXTRACT($$,'MINUTE',##)",
+        MINUTE_OF_DAY: "TIME_EXTRACT($$,'HOUR',##)*60+TIME_EXTRACT($$,'MINUTE',##)",
+        MINUTE_OF_WEEK: "(MOD(CAST((TIME_EXTRACT($$,'DOW',##)+6) AS int),7)*24)+TIME_EXTRACT($$,'HOUR',##)*60+TIME_EXTRACT($$,'MINUTE',##)",
+        MINUTE_OF_MONTH: "((TIME_EXTRACT($$,'DAY',##)-1)*24)+TIME_EXTRACT($$,'HOUR',##)*60+TIME_EXTRACT($$,'MINUTE',##)",
+        MINUTE_OF_YEAR: "((TIME_EXTRACT($$,'DOY',##)-1)*24)+TIME_EXTRACT($$,'HOUR',##)*60+TIME_EXTRACT($$,'MINUTE',##)",
+        HOUR_OF_DAY: "TIME_EXTRACT($$,'HOUR',##)",
+        HOUR_OF_WEEK: "(MOD(CAST((TIME_EXTRACT($$,'DOW',##)+6) AS int),7)*24+TIME_EXTRACT($$,'HOUR',##))",
+        HOUR_OF_MONTH: "((TIME_EXTRACT($$,'DAY',##)-1)*24+TIME_EXTRACT($$,'HOUR',##))",
+        HOUR_OF_YEAR: "((TIME_EXTRACT($$,'DOY',##)-1)*24+TIME_EXTRACT($$,'HOUR',##))",
+        DAY_OF_WEEK: "MOD(CAST((TIME_EXTRACT($$,'DOW',##)+6) AS int),7)+1",
+        DAY_OF_MONTH: "TIME_EXTRACT($$,'DAY',##)",
+        DAY_OF_YEAR: "TIME_EXTRACT($$,'DOY',##)",
+        WEEK_OF_YEAR: "TIME_EXTRACT($$,'WEEK',##)",
+        MONTH_OF_YEAR: "TIME_EXTRACT($$,'MONTH',##)",
+        YEAR: "TIME_EXTRACT($$,'YEAR',##)"
     };
     DruidDialect.CAST_TO_FUNCTION = {
         TIME: {
-            NUMBER: 'TO_TIMESTAMP($$::double precision / 1000)'
+            NUMBER: 'MILLIS_TO_TIMESTAMP(CAST($$ AS BIGINT))'
         },
         NUMBER: {
             TIME: "CAST($$ AS BIGINT)",

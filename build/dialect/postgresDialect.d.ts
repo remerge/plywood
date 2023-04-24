@@ -17,7 +17,7 @@ export declare class PostgresDialect extends SQLDialect {
     timeFloorExpression(operand: string, duration: Duration, timezone: Timezone): string;
     timeBucketExpression(operand: string, duration: Duration, timezone: Timezone): string;
     timePartExpression(operand: string, part: string, timezone: Timezone): string;
-    timeShiftExpression(operand: string, duration: Duration, timezone: Timezone): string;
+    timeShiftExpression(operand: string, duration: Duration, step: int, timezone: Timezone): string;
     extractExpression(operand: string, regexp: string): string;
     indexOfExpression(str: string, substr: string): string;
 }
