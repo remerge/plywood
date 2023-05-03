@@ -60,8 +60,7 @@ export function concurrentLimitRequesterFactory<T>(parameters: ConcurrentLimitRe
       console.log(`Request finished ${requestId}`);
       requestFinished();
     });
-    stream.on('error', requestFinishedOnce);
-    stream.on('end', requestFinishedOnce);
+    stream.on('close', requestFinishedOnce)
 
     pipeWithError(stream, queueItem.stream);
   }
@@ -77,8 +76,7 @@ export function concurrentLimitRequesterFactory<T>(parameters: ConcurrentLimitRe
         console.log(`Request finished ${requestId}`);
         requestFinished();
       });
-      stream.on('error', requestFinishedOnce);
-      stream.on('end', requestFinishedOnce);
+      stream.on('close', requestFinishedOnce)
 
       return stream;
     } else {
