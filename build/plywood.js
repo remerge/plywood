@@ -165,14 +165,20 @@ var concurrentLimitRequesterFactory = exports.concurrentLimitRequesterFactory = 
         var queueItem = requestQueue.shift();
         outstandingRequests++;
         var requestId = generateRequestId();
-        console.log("Starting request " + requestId + " (" + outstandingRequests + "/" + concurrentLimit + "): " + queueItem.request.query.queryType);
+        console.log("Starting request " + requestId + " (" + outstandingRequests + "/" + concurrentLimit + "): " + queueItem.request.query.queryType + " from queue");
         var stream = requester(queueItem.request);
         var requestFinishedOnce = getOnceCallback(function () {
-            console.log("Request finished " + requestId);
+            console.log("Request finished " + requestId + " from Queue");
             requestFinished();
         });
-        stream.on('error', requestFinishedOnce);
-        stream.on('end', requestFinishedOnce);
+        stream.on('error', function () { return requestFinishedOnce(); });
+        stream.on('end', function () { return requestFinishedOnce(); });
+        queueItem.stream.on('error', function (error) {
+            requestFinishedOnce(function () {
+                console.log("Error on PassThrough for request " + requestId);
+                stream.emit('error', error);
+            });
+        });
         pipeWithError(stream, queueItem.stream);
     }
     return function (request) {
@@ -181,12 +187,12 @@ var concurrentLimitRequesterFactory = exports.concurrentLimitRequesterFactory = 
             var requestId_1 = generateRequestId();
             console.log("Starting request " + requestId_1 + " (" + outstandingRequests + "/" + concurrentLimit + "): " + request.query.queryType);
             var stream = requester(request);
-            var requestFinishedOnce = getOnceCallback(function () {
+            var requestFinishedOnce_1 = getOnceCallback(function () {
                 console.log("Request finished " + requestId_1);
                 requestFinished();
             });
-            stream.on('error', requestFinishedOnce);
-            stream.on('end', requestFinishedOnce);
+            stream.on('error', function () { return requestFinishedOnce_1(); });
+            stream.on('end', function () { return requestFinishedOnce_1(); });
             return stream;
         }
         else {
@@ -201,10 +207,12 @@ var concurrentLimitRequesterFactory = exports.concurrentLimitRequesterFactory = 
 }
 function getOnceCallback(callback) {
     var called = false;
-    return function () {
+    return function (optionalCallback) {
+        if (optionalCallback === void 0) { optionalCallback = function () { }; }
         if (!called) {
             called = true;
             callback();
+            optionalCallback();
         }
     };
 }
