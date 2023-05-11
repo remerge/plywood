@@ -41,9 +41,10 @@ export function concurrentLimitRequesterFactory<T>(parameters: ConcurrentLimitRe
 
   let requestQueue: QueueItem<T>[] = [];
   let outstandingRequests: int = 0;
+  let runningRequestIds: string[] = []
 
   setInterval(() => {
-    console.log(`Concurrent Limit: ${outstandingRequests} / ${concurrentLimit}. Queue length: ${requestQueue.length}`)
+    console.log(`Concurrent Limit: ${outstandingRequests} / ${concurrentLimit}. Queue length: ${requestQueue.length}, Running Requests: ${runningRequestIds.join(', ')}`)
   }, 60 * 1000)
 
   function requestFinished(): void {
@@ -52,11 +53,13 @@ export function concurrentLimitRequesterFactory<T>(parameters: ConcurrentLimitRe
     let queueItem = requestQueue.shift();
     outstandingRequests++;
     const requestId = generateRequestId();
+    runningRequestIds.push(requestId);
     console.log(`Starting request ${requestId} (${outstandingRequests}/${concurrentLimit}): ${(queueItem.request.query as any).queryType} from queue`);
 
     const stream = requester(queueItem.request);
 
     const requestFinishedOnce = getOnceCallback(() => {
+      runningRequestIds = runningRequestIds.filter((id) => id !== requestId)
       console.log(`Request finished ${requestId} from Queue`);
       requestFinished();
     });
@@ -66,7 +69,6 @@ export function concurrentLimitRequesterFactory<T>(parameters: ConcurrentLimitRe
     queueItem.stream.on('error', (error) => {
       requestFinishedOnce(() => {
         console.log(`Error on PassThrough for request ${requestId}`)
-        stream.emit('error', error);
       })
     });
 
@@ -77,11 +79,13 @@ export function concurrentLimitRequesterFactory<T>(parameters: ConcurrentLimitRe
     if (outstandingRequests < concurrentLimit) {
       outstandingRequests++;
       const requestId = generateRequestId();
+      runningRequestIds.push(requestId);
       console.log(`Starting request ${requestId} (${outstandingRequests}/${concurrentLimit}): ${(request.query as any).queryType}`);
       const stream = requester(request);
 
       const requestFinishedOnce = getOnceCallback(() => {
         console.log(`Request finished ${requestId}`);
+        runningRequestIds = runningRequestIds.filter((id) => id !== requestId)
         requestFinished();
       });
       stream.on('error', () => requestFinishedOnce());

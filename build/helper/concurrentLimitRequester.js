@@ -10,8 +10,9 @@ export function concurrentLimitRequesterFactory(parameters) {
         throw new TypeError("concurrentLimit should be a number");
     var requestQueue = [];
     var outstandingRequests = 0;
+    var runningRequestIds = [];
     setInterval(function () {
-        console.log("Concurrent Limit: " + outstandingRequests + " / " + concurrentLimit + ". Queue length: " + requestQueue.length);
+        console.log("Concurrent Limit: " + outstandingRequests + " / " + concurrentLimit + ". Queue length: " + requestQueue.length + ", Running Requests: " + runningRequestIds.join(', '));
     }, 60 * 1000);
     function requestFinished() {
         outstandingRequests--;
@@ -20,9 +21,11 @@ export function concurrentLimitRequesterFactory(parameters) {
         var queueItem = requestQueue.shift();
         outstandingRequests++;
         var requestId = generateRequestId();
+        runningRequestIds.push(requestId);
         console.log("Starting request " + requestId + " (" + outstandingRequests + "/" + concurrentLimit + "): " + queueItem.request.query.queryType + " from queue");
         var stream = requester(queueItem.request);
         var requestFinishedOnce = getOnceCallback(function () {
+            runningRequestIds = runningRequestIds.filter(function (id) { return id !== requestId; });
             console.log("Request finished " + requestId + " from Queue");
             requestFinished();
         });
@@ -31,7 +34,6 @@ export function concurrentLimitRequesterFactory(parameters) {
         queueItem.stream.on('error', function (error) {
             requestFinishedOnce(function () {
                 console.log("Error on PassThrough for request " + requestId);
-                stream.emit('error', error);
             });
         });
         pipeWithError(stream, queueItem.stream);
@@ -40,10 +42,12 @@ export function concurrentLimitRequesterFactory(parameters) {
         if (outstandingRequests < concurrentLimit) {
             outstandingRequests++;
             var requestId_1 = generateRequestId();
+            runningRequestIds.push(requestId_1);
             console.log("Starting request " + requestId_1 + " (" + outstandingRequests + "/" + concurrentLimit + "): " + request.query.queryType);
             var stream = requester(request);
             var requestFinishedOnce_1 = getOnceCallback(function () {
                 console.log("Request finished " + requestId_1);
+                runningRequestIds = runningRequestIds.filter(function (id) { return id !== requestId_1; });
                 requestFinished();
             });
             stream.on('error', function () { return requestFinishedOnce_1(); });
