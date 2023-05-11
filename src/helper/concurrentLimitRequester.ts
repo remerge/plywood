@@ -19,6 +19,10 @@ import { DatabaseRequest, PlywoodRequester } from 'plywood-base-api';
 import { PassThrough } from 'readable-stream';
 import { pipeWithError } from './utils';
 
+function generateRequestId() {
+  return Math.random().toString(26).slice(2);
+}
+
 export interface ConcurrentLimitRequesterParameters<T> {
   requester: PlywoodRequester<T>;
   concurrentLimit: int;
@@ -37,17 +41,36 @@ export function concurrentLimitRequesterFactory<T>(parameters: ConcurrentLimitRe
 
   let requestQueue: QueueItem<T>[] = [];
   let outstandingRequests: int = 0;
+  let runningRequestIds: string[] = []
+
+  setInterval(() => {
+    console.log(`Concurrent Limit: ${outstandingRequests} / ${concurrentLimit}. Queue length: ${requestQueue.length}, Running Requests: ${runningRequestIds.join(', ')}`)
+  }, 60 * 1000)
+
   function requestFinished(): void {
     outstandingRequests--;
     if (!(requestQueue.length && outstandingRequests < concurrentLimit)) return;
     let queueItem = requestQueue.shift();
     outstandingRequests++;
+    const requestId = generateRequestId();
+    runningRequestIds.push(requestId);
+    console.log(`Starting request ${requestId} (${outstandingRequests}/${concurrentLimit}): ${(queueItem.request.query as any).queryType} from queue`);
 
     const stream = requester(queueItem.request);
 
-    const requestFinishedOnce = getOnceCallback(requestFinished);
-    stream.on('error', requestFinishedOnce);
-    stream.on('end', requestFinishedOnce);
+    const requestFinishedOnce = getOnceCallback(() => {
+      runningRequestIds = runningRequestIds.filter((id) => id !== requestId)
+      console.log(`Request finished ${requestId} from Queue`);
+      requestFinished();
+    });
+    stream.on('error', () => requestFinishedOnce());
+    stream.on('end', () => requestFinishedOnce());
+
+    queueItem.stream.on('error', (error) => {
+      requestFinishedOnce(() => {
+        console.log(`Error on PassThrough for request ${requestId}`)
+      })
+    });
 
     pipeWithError(stream, queueItem.stream);
   }
@@ -55,11 +78,18 @@ export function concurrentLimitRequesterFactory<T>(parameters: ConcurrentLimitRe
   return (request: DatabaseRequest<T>) => {
     if (outstandingRequests < concurrentLimit) {
       outstandingRequests++;
+      const requestId = generateRequestId();
+      runningRequestIds.push(requestId);
+      console.log(`Starting request ${requestId} (${outstandingRequests}/${concurrentLimit}): ${(request.query as any).queryType}`);
       const stream = requester(request);
 
-      const requestFinishedOnce = getOnceCallback(requestFinished);
-      stream.on('error', requestFinishedOnce);
-      stream.on('end', requestFinishedOnce);
+      const requestFinishedOnce = getOnceCallback(() => {
+        console.log(`Request finished ${requestId}`);
+        runningRequestIds = runningRequestIds.filter((id) => id !== requestId)
+        requestFinished();
+      });
+      stream.on('error', () => requestFinishedOnce());
+      stream.on('end', () => requestFinishedOnce());
 
       return stream;
     } else {
@@ -76,10 +106,11 @@ export function concurrentLimitRequesterFactory<T>(parameters: ConcurrentLimitRe
 function getOnceCallback(callback: () => void) {
   let called = false;
 
-  return () => {
+  return (optionalCallback = () => {}) => {
     if (!called) {
       called = true;
       callback();
+      optionalCallback();
     }
   };
 }
