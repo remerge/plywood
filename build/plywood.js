@@ -150,6 +150,7 @@ function generateRequestId() {
 }
 var concurrentLimitRequesterFactory = exports.concurrentLimitRequesterFactory = function(parameters) {
     var requester = parameters.requester;
+    var concurrentRequests = parameters.concurrentRequests;
     var concurrentLimit = parameters.concurrentLimit || 5;
     if (typeof concurrentLimit !== "number")
         throw new TypeError("concurrentLimit should be a number");
@@ -161,10 +162,12 @@ var concurrentLimitRequesterFactory = exports.concurrentLimitRequesterFactory = 
     }, 60 * 1000);
     function requestFinished() {
         outstandingRequests--;
+        concurrentRequests.dec();
         if (!(requestQueue.length && outstandingRequests < concurrentLimit))
             return;
         var queueItem = requestQueue.shift();
         outstandingRequests++;
+        concurrentRequests.inc();
         var requestId = generateRequestId();
         runningRequestIds.push(requestId);
         console.log("Starting request " + requestId + " (" + outstandingRequests + "/" + concurrentLimit + "): " + queueItem.request.query.queryType + " from queue");
@@ -186,6 +189,7 @@ var concurrentLimitRequesterFactory = exports.concurrentLimitRequesterFactory = 
     return function (request) {
         if (outstandingRequests < concurrentLimit) {
             outstandingRequests++;
+            concurrentRequests.inc();
             var requestId_1 = generateRequestId();
             runningRequestIds.push(requestId_1);
             console.log("Starting request " + requestId_1 + " (" + outstandingRequests + "/" + concurrentLimit + "): " + request.query.queryType);
