@@ -18,16 +18,23 @@
 import { DatabaseRequest, PlywoodRequester } from 'plywood-base-api';
 import { PassThrough } from 'readable-stream';
 import { pipeWithError } from './utils';
-import { Gauge } from 'prom-client';
+
 
 function generateRequestId() {
   return Math.random().toString(26).slice(2);
 }
 
+interface ConcurrentRequestStore {
+  inc(): void;
+  dec(): void;
+  requests(): number;
+}
+
+
 export interface ConcurrentLimitRequesterParameters<T> {
   requester: PlywoodRequester<T>;
   concurrentLimit: int;
-  concurrentRequests: Gauge;
+  concurrentRequests: ConcurrentRequestStore;
 }
 
 interface QueueItem<T> {
