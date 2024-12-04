@@ -53,7 +53,8 @@ describe("Concurrent Limit Requester", () => {
     let requester = makeRequester();
     let concurrentLimitRequester = concurrentLimitRequesterFactory({
       requester,
-      concurrentLimit: 2
+      concurrentLimit: 2,
+      concurrentRequests: {},
     });
 
     let p = toArray(concurrentLimitRequester({ query: 'a' }))
@@ -69,7 +70,8 @@ describe("Concurrent Limit Requester", () => {
     let requester = makeRequester();
     let concurrentLimitRequester = concurrentLimitRequesterFactory({
       requester,
-      concurrentLimit: 2
+      concurrentLimit: 2,
+      concurrentRequests: {},
     });
 
     let nextQuery = 'a';
@@ -107,7 +109,8 @@ describe("Concurrent Limit Requester", () => {
     let requester = makeRequester();
     let concurrentLimitRequester = concurrentLimitRequesterFactory({
       requester,
-      concurrentLimit: 2
+      concurrentLimit: 2,
+      concurrentRequests: {},
     });
 
     let nextQuery = 'a';

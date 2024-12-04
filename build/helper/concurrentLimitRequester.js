@@ -6,6 +6,7 @@ function generateRequestId() {
 export function concurrentLimitRequesterFactory(parameters) {
     var requester = parameters.requester;
     var concurrentLimit = parameters.concurrentLimit || 5;
+    var concurrentRequests = parameters.concurrentRequests;
     if (typeof concurrentLimit !== "number")
         throw new TypeError("concurrentLimit should be a number");
     var requestQueue = [];
@@ -16,10 +17,12 @@ export function concurrentLimitRequesterFactory(parameters) {
     }, 60 * 1000);
     function requestFinished() {
         outstandingRequests--;
+        concurrentRequests.dec();
         if (!(requestQueue.length && outstandingRequests < concurrentLimit))
             return;
         var queueItem = requestQueue.shift();
         outstandingRequests++;
+        concurrentRequests.inc();
         var requestId = generateRequestId();
         runningRequestIds.push(requestId);
         console.log("Starting request " + requestId + " (" + outstandingRequests + "/" + concurrentLimit + "): " + queueItem.request.query.queryType + " from queue");
@@ -41,6 +44,7 @@ export function concurrentLimitRequesterFactory(parameters) {
     return function (request) {
         if (outstandingRequests < concurrentLimit) {
             outstandingRequests++;
+            concurrentRequests.inc();
             var requestId_1 = generateRequestId();
             runningRequestIds.push(requestId_1);
             console.log("Starting request " + requestId_1 + " (" + outstandingRequests + "/" + concurrentLimit + "): " + request.query.queryType);

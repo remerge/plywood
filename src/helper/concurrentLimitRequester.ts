@@ -19,13 +19,22 @@ import { DatabaseRequest, PlywoodRequester } from 'plywood-base-api';
 import { PassThrough } from 'readable-stream';
 import { pipeWithError } from './utils';
 
+
 function generateRequestId() {
   return Math.random().toString(26).slice(2);
 }
 
+interface ConcurrentRequestStore {
+  inc(): void;
+  dec(): void;
+  requests(): number;
+}
+
+
 export interface ConcurrentLimitRequesterParameters<T> {
   requester: PlywoodRequester<T>;
   concurrentLimit: int;
+  concurrentRequests: ConcurrentRequestStore;
 }
 
 interface QueueItem<T> {
@@ -36,6 +45,7 @@ interface QueueItem<T> {
 export function concurrentLimitRequesterFactory<T>(parameters: ConcurrentLimitRequesterParameters<T>): PlywoodRequester<T> {
   let requester = parameters.requester;
   let concurrentLimit = parameters.concurrentLimit || 5;
+  let concurrentRequests = parameters.concurrentRequests;
 
   if (typeof concurrentLimit !== "number") throw new TypeError("concurrentLimit should be a number");
 
@@ -49,9 +59,11 @@ export function concurrentLimitRequesterFactory<T>(parameters: ConcurrentLimitRe
 
   function requestFinished(): void {
     outstandingRequests--;
+    concurrentRequests.dec();
     if (!(requestQueue.length && outstandingRequests < concurrentLimit)) return;
     let queueItem = requestQueue.shift();
     outstandingRequests++;
+    concurrentRequests.inc();
     const requestId = generateRequestId();
     runningRequestIds.push(requestId);
     console.log(`Starting request ${requestId} (${outstandingRequests}/${concurrentLimit}): ${(queueItem.request.query as any).queryType} from queue`);
@@ -78,6 +90,7 @@ export function concurrentLimitRequesterFactory<T>(parameters: ConcurrentLimitRe
   return (request: DatabaseRequest<T>) => {
     if (outstandingRequests < concurrentLimit) {
       outstandingRequests++;
+      concurrentRequests.inc();
       const requestId = generateRequestId();
       runningRequestIds.push(requestId);
       console.log(`Starting request ${requestId} (${outstandingRequests}/${concurrentLimit}): ${(request.query as any).queryType}`);
