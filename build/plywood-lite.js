@@ -6166,7 +6166,8 @@ var IsExpression = (function (_super) {
                     var inCheck = operandSQL + " IN (" + expressionSet.elements.map(function (v) { return typeof v === 'number' ? v : dialect.escapeLiteral(v); }).join(',') + ")";
                     return nullCheck ? "(" + nullCheck + " OR " + inCheck + ")" : inCheck;
                 default:
-                    return expressionSet.elements.map(function (e) { return dialect.isNotDistinctFromExpression(operandSQL, r(e).getSQL(dialect)); }).join(' OR ');
+                    var parts = expressionSet.elements.map(function (e) { return dialect.isNotDistinctFromExpression(operandSQL, r(e).getSQL(dialect)); });
+                    return parts.length > 1 ? '(' + parts.join(' OR ') + ')' : parts[0];
             }
         }
         else {
@@ -6952,9 +6953,10 @@ var OverlapExpression = (function (_super) {
             case 'SET/TIME_RANGE':
                 if (expression instanceof LiteralExpression) {
                     var setOfRange = expression.value;
-                    return setOfRange.elements.map(function (range) {
+                    var parts = setOfRange.elements.map(function (range) {
                         return dialect.inExpression(operandSQL, dialect.numberOrTimeToSQL(range.start), dialect.numberOrTimeToSQL(range.end), range.bounds);
-                    }).join(' OR ');
+                    });
+                    return parts.length > 1 ? '(' + parts.join(' OR ') + ')' : parts[0];
                 }
                 throw new Error("can not convert action to SQL " + this);
             default:

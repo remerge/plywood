@@ -96,9 +96,10 @@ export class OverlapExpression extends ChainableUnaryExpression {
       case 'SET/TIME_RANGE':
         if (expression instanceof LiteralExpression) {
           let setOfRange: Set = expression.value;
-          return setOfRange.elements.map((range: (NumberRange | TimeRange)) => {
+          let parts = setOfRange.elements.map((range: (NumberRange | TimeRange)) => {
             return dialect.inExpression(operandSQL, dialect.numberOrTimeToSQL(range.start), dialect.numberOrTimeToSQL(range.end), range.bounds);
-          }).join(' OR ');
+          });
+          return parts.length > 1 ? '(' + parts.join(' OR ') + ')' : parts[0];
         }
         throw new Error(`can not convert action to SQL ${this}`);
 
