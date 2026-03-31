@@ -45,7 +45,8 @@ var IsExpression = (function (_super) {
                     var inCheck = operandSQL + " IN (" + expressionSet.elements.map(function (v) { return typeof v === 'number' ? v : dialect.escapeLiteral(v); }).join(',') + ")";
                     return nullCheck ? "(" + nullCheck + " OR " + inCheck + ")" : inCheck;
                 default:
-                    return expressionSet.elements.map(function (e) { return dialect.isNotDistinctFromExpression(operandSQL, r(e).getSQL(dialect)); }).join(' OR ');
+                    var parts = expressionSet.elements.map(function (e) { return dialect.isNotDistinctFromExpression(operandSQL, r(e).getSQL(dialect)); });
+                    return parts.length > 1 ? '(' + parts.join(' OR ') + ')' : parts[0];
             }
         }
         else {

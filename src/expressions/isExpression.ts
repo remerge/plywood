@@ -68,7 +68,8 @@ export class IsExpression extends ChainableUnaryExpression {
           return nullCheck ? `(${nullCheck} OR ${inCheck})` : inCheck;
 
         default:
-          return expressionSet.elements.map((e) => dialect.isNotDistinctFromExpression(operandSQL, r(e).getSQL(dialect))).join(' OR ');
+          let parts = expressionSet.elements.map((e) => dialect.isNotDistinctFromExpression(operandSQL, r(e).getSQL(dialect)));
+          return parts.length > 1 ? '(' + parts.join(' OR ') + ')' : parts[0];
       }
     } else {
       return dialect.isNotDistinctFromExpression(operandSQL, expressionSQL);

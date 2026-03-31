@@ -73,9 +73,10 @@ var OverlapExpression = (function (_super) {
             case 'SET/TIME_RANGE':
                 if (expression instanceof LiteralExpression) {
                     var setOfRange = expression.value;
-                    return setOfRange.elements.map(function (range) {
+                    var parts = setOfRange.elements.map(function (range) {
                         return dialect.inExpression(operandSQL, dialect.numberOrTimeToSQL(range.start), dialect.numberOrTimeToSQL(range.end), range.bounds);
-                    }).join(' OR ');
+                    });
+                    return parts.length > 1 ? '(' + parts.join(' OR ') + ')' : parts[0];
                 }
                 throw new Error("can not convert action to SQL " + this);
             default:
