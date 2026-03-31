@@ -70,7 +70,7 @@ export class LookupExpression extends ChainableExpression {
   }
 
   protected _getSQLChainableHelper(dialect: SQLDialect, operandSQL: string): string {
-    throw new Error('can not express as SQL');
+    return dialect.lookupExpression(operandSQL, this.lookupFn);
   }
 }
 

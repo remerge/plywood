@@ -167,6 +167,10 @@ export abstract class SQLDialect {
 
   public abstract indexOfExpression(str: string, substr: string): string;
 
+  public lookupExpression(operand: string, lookupFn: string): string {
+    throw new Error('must implement lookupExpression');
+  }
+
   public logExpression(base: string, operand: string): string {
     if (base === String(Math.E)) return `LN(${operand})`;
     return `LOG(${base},${operand})`;
